@@ -404,6 +404,8 @@ int f2fs_init_acl(struct inode *inode, struct inode *dir, struct page *ipage,
 					       ipage);
 		posix_acl_release(acl);
 	}
+	if (!default_acl && !acl)
+		cache_no_acl(inode);
 
 	return error;
 }
