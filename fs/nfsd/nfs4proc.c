@@ -1298,10 +1298,8 @@ nfsd4_copy(struct svc_rqst *rqstp, struct nfsd4_compound_state *cstate,
 		spin_unlock(&async_copy->cp_clp->async_lock);
 		wake_up_process(async_copy->copy_task);
 		status = nfs_ok;
-	} else {
-		copy->cp_synchronous = 1;
+	} else
 		status = nfsd4_do_copy(copy, 1);
-	}
 out:
 	return status;
 out_err:
