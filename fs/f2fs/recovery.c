@@ -675,6 +675,9 @@ int f2fs_recover_fsync_data(struct f2fs_sb_info *sbi, bool check_only)
 
 	need_writecp = true;
 
+	/* quota is not fully updated due to the lack of user information. */
+	set_sbi_flag(sbi, SBI_NEED_FSCK);
+
 	/* step #2: recover data */
 	err = recover_data(sbi, &inode_list, &dir_list);
 	if (!err)
