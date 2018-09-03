@@ -43,8 +43,16 @@ struct smb_snapshot_array {
 	/*	snapshots[]; */
 } __packed;
 
+struct smb_srv_copychunk {
+	__u32   src_fd;
+	__u32   length;
+	__u64   src_offset;
+	__u64   dst_offset;
+} __packed;
+
 #define CIFS_IOCTL_MAGIC	0xCF
 #define CIFS_IOC_COPYCHUNK_FILE	_IOW(CIFS_IOCTL_MAGIC, 3, int)
 #define CIFS_IOC_SET_INTEGRITY  _IO(CIFS_IOCTL_MAGIC, 4)
 #define CIFS_IOC_GET_MNT_INFO _IOR(CIFS_IOCTL_MAGIC, 5, struct smb_mnt_fs_info)
 #define CIFS_ENUMERATE_SNAPSHOTS _IOR(CIFS_IOCTL_MAGIC, 6, struct smb_snapshot_array)
+#define CIFS_IOC_COPYCHUNK _IOW(CIFS_IOCTL_MAGIC, 7, struct smb_srv_copychunk)
