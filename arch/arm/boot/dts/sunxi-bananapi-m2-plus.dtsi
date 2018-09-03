@@ -1,6 +1,5 @@
 /*
- * Copyright (C) 2017 Chen-Yu Tsai <wens@csie.org>
- * Copyright (C) 2017 Icenowy Zheng <icenowy@aosc.io>
+ * Copyright (C) 2016 Chen-Yu Tsai <wens@csie.org>
  *
  * This file is dual-licensed: you can use it either under the terms
  * of the GPL or the X11 license, at your option. Note that this dual
@@ -41,18 +40,16 @@
  *     OTHER DEALINGS IN THE SOFTWARE.
  */
 
-/dts-v1/;
-#include "sun8i-r40.dtsi"
+#include "sunxi-common-regulators.dtsi"
 
 #include <dt-bindings/gpio/gpio.h>
+#include <dt-bindings/input/input.h>
 
 / {
-	model = "Banana Pi BPI-M2-Ultra";
-	compatible = "sinovoip,bpi-m2-ultra", "allwinner,sun8i-r40";
-
 	aliases {
-		ethernet0 = &gmac;
+		ethernet0 = &emac;
 		serial0 = &uart0;
+		serial1 = &uart1;
 	};
 
 	chosen {
@@ -72,40 +69,48 @@
 
 	leds {
 		compatible = "gpio-leds";
+		pinctrl-names = "default";
 
-		pwr-led {
-			label = "bananapi:red:pwr";
-			gpios = <&pio 7 20 GPIO_ACTIVE_HIGH>;
+		pwr_led {
+			label = "bananapi-m2-plus:red:pwr";
+			gpios = <&r_pio 0 10 GPIO_ACTIVE_HIGH>; /* PL10 */
 			default-state = "on";
-		};
-
-		user-led-green {
-			label = "bananapi:green:user";
-			gpios = <&pio 7 21 GPIO_ACTIVE_HIGH>;
-		};
-
-		user-led-blue {
-			label = "bananapi:blue:user";
-			gpios = <&pio 7 22 GPIO_ACTIVE_HIGH>;
 		};
 	};
 
-	reg_vcc5v0: vcc5v0 {
-		compatible = "regulator-fixed";
-		regulator-name = "vcc5v0";
-		regulator-min-microvolt = <5000000>;
-		regulator-max-microvolt = <5000000>;
-		gpio = <&pio 7 23 GPIO_ACTIVE_HIGH>; /* PH23 */
-		enable-active-high;
+	gpio_keys {
+		compatible = "gpio-keys";
+		pinctrl-names = "default";
+
+		sw4 {
+			label = "power";
+			linux,code = <BTN_0>;
+			gpios = <&r_pio 0 3 GPIO_ACTIVE_LOW>;
+		};
+	};
+
+	reg_gmac_3v3: gmac-3v3 {
+		      compatible = "regulator-fixed";
+		      regulator-name = "gmac-3v3";
+		      regulator-min-microvolt = <3300000>;
+		      regulator-max-microvolt = <3300000>;
+		      startup-delay-us = <100000>;
+		      enable-active-high;
+		      gpio = <&pio 3 6 GPIO_ACTIVE_HIGH>;
 	};
 
 	wifi_pwrseq: wifi_pwrseq {
 		compatible = "mmc-pwrseq-simple";
-		reset-gpios = <&pio 6 10 GPIO_ACTIVE_LOW>; /* PG10 WIFI_EN */
+		pinctrl-names = "default";
+		reset-gpios = <&r_pio 0 7 GPIO_ACTIVE_LOW>; /* PL7 */
 	};
 };
 
 &de {
+	status = "okay";
+};
+
+&ehci0 {
 	status = "okay";
 };
 
@@ -117,17 +122,18 @@
 	status = "okay";
 };
 
-&gmac {
+&emac {
 	pinctrl-names = "default";
-	pinctrl-0 = <&gmac_rgmii_pins>;
-	phy-handle = <&phy1>;
+	pinctrl-0 = <&emac_rgmii_pins>;
+	phy-supply = <&reg_gmac_3v3>;
+	phy-handle = <&ext_rgmii_phy>;
 	phy-mode = "rgmii";
-	phy-supply = <&reg_dc1sw>;
+
 	status = "okay";
 };
 
-&gmac_mdio {
-	phy1: ethernet-phy@1 {
+&external_mdio {
+	ext_rgmii_phy: ethernet-phy@1 {
 		compatible = "ethernet-phy-ieee802.3-c22";
 		reg = <1>;
 	};
@@ -143,42 +149,47 @@
 	};
 };
 
-&i2c0 {
+&ir {
+	pinctrl-names = "default";
+	pinctrl-0 = <&ir_pins_a>;
 	status = "okay";
-
-	axp22x: pmic@34 {
-		compatible = "x-powers,axp221";
-		reg = <0x34>;
-		interrupt-parent = <&nmi_intc>;
-		interrupts = <0 IRQ_TYPE_LEVEL_LOW>;
-	};
 };
 
-#include "axp22x.dtsi"
-
 &mmc0 {
-	vmmc-supply = <&reg_dcdc1>;
+	vmmc-supply = <&reg_vcc3v3>;
 	bus-width = <4>;
-	cd-gpios = <&pio 7 13 GPIO_ACTIVE_LOW>; /* PH13 */
+	cd-gpios = <&pio 5 6 GPIO_ACTIVE_LOW>; /* PF6 */
 	status = "okay";
 };
 
 &mmc1 {
-	pinctrl-names = "default";
-	pinctrl-0 = <&mmc1_pg_pins>;
-	vmmc-supply = <&reg_dldo2>;
-	vqmmc-supply = <&reg_dldo1>;
+	vmmc-supply = <&reg_vcc3v3>;
+	vqmmc-supply = <&reg_vcc3v3>;
 	mmc-pwrseq = <&wifi_pwrseq>;
 	bus-width = <4>;
 	non-removable;
 	status = "okay";
+
+	brcmf: wifi@1 {
+		reg = <1>;
+		compatible = "brcm,bcm4329-fmac";
+		interrupt-parent = <&pio>;
+		interrupts = <6 10 IRQ_TYPE_LEVEL_LOW>; /* PG10 / EINT10 */
+		interrupt-names = "host-wake";
+	};
 };
 
 &mmc2 {
-	vmmc-supply = <&reg_dcdc1>;
-	vqmmc-supply = <&reg_dcdc1>;
+	pinctrl-names = "default";
+	pinctrl-0 = <&mmc2_8bit_pins>;
+	vmmc-supply = <&reg_vcc3v3>;
+	vqmmc-supply = <&reg_vcc3v3>;
 	bus-width = <8>;
 	non-removable;
+	status = "okay";
+};
+
+&ohci0 {
 	status = "okay";
 };
 
@@ -190,78 +201,31 @@
 	status = "okay";
 };
 
-&reg_aldo2 {
-	regulator-always-on;
-	regulator-min-microvolt = <2500000>;
-	regulator-max-microvolt = <2500000>;
-	regulator-name = "vcc-pa";
-};
-
-&reg_aldo3 {
-	regulator-always-on;
-	regulator-min-microvolt = <2700000>;
-	regulator-max-microvolt = <3300000>;
-	regulator-name = "avcc";
-};
-
-&reg_dc1sw {
-	regulator-min-microvolt = <3000000>;
-	regulator-max-microvolt = <3000000>;
-	regulator-name = "vcc-gmac-phy";
-};
-
-&reg_dcdc1 {
-	regulator-always-on;
-	regulator-min-microvolt = <3000000>;
-	regulator-max-microvolt = <3000000>;
-	regulator-name = "vcc-3v0";
-};
-
-&reg_dcdc2 {
-	regulator-always-on;
-	regulator-min-microvolt = <1000000>;
-	regulator-max-microvolt = <1300000>;
-	regulator-name = "vdd-cpu";
-};
-
-&reg_dcdc3 {
-	regulator-always-on;
-	regulator-min-microvolt = <1000000>;
-	regulator-max-microvolt = <1300000>;
-	regulator-name = "vdd-sys";
-};
-
-&reg_dcdc5 {
-	regulator-always-on;
-	regulator-min-microvolt = <1500000>;
-	regulator-max-microvolt = <1500000>;
-	regulator-name = "vcc-dram";
-};
-
-&reg_dldo1 {
-	regulator-min-microvolt = <1800000>;
-	regulator-max-microvolt = <3300000>;
-	regulator-name = "vcc-wifi-io";
-};
-
-&reg_dldo2 {
-	regulator-min-microvolt = <3300000>;
-	regulator-max-microvolt = <3300000>;
-	regulator-name = "vcc-wifi";
-};
-
-&tcon_tv0 {
+&reg_usb0_vbus {
+	gpio = <&pio 3 11 GPIO_ACTIVE_HIGH>; /* PD11 */
 	status = "okay";
 };
 
 &uart0 {
 	pinctrl-names = "default";
-	pinctrl-0 = <&uart0_pb_pins>;
+	pinctrl-0 = <&uart0_pins_a>;
+	status = "okay";
+};
+
+&uart1 {
+	pinctrl-names = "default";
+	pinctrl-0 = <&uart1_pins>, <&uart1_rts_cts_pins>;
+	status = "okay";
+};
+
+&usb_otg {
+	dr_mode = "otg";
 	status = "okay";
 };
 
 &usbphy {
-	usb1_vbus-supply = <&reg_vcc5v0>;
-	usb2_vbus-supply = <&reg_vcc5v0>;
+	usb0_id_det-gpios = <&r_pio 0 6 GPIO_ACTIVE_HIGH>; /* PL6 */
+	usb0_vbus-supply = <&reg_usb0_vbus>;
+	/* USB host VBUS is on as long as VCC-IO is on */
 	status = "okay";
 };
