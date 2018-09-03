@@ -34,14 +34,13 @@
 #include "cifs_ioctl.h"
 #include <linux/btrfs.h>
 
-static long cifs_ioctl_copychunk(unsigned int xid, struct file *dst_file,
-			unsigned long srcfd)
+static long _cifs_ioctl_copychunk(unsigned int xid, struct file *dst_file,
+				  struct smb_srv_copychunk *cc)
 {
 	int rc;
 	struct fd src_file;
 	struct inode *src_inode;
 
-	cifs_dbg(FYI, "ioctl copychunk range\n");
 	/* the destination must be opened for writing */
 	if (!(dst_file->f_mode & FMODE_WRITE)) {
 		cifs_dbg(FYI, "file target not open for write\n");
@@ -55,7 +54,7 @@ static long cifs_ioctl_copychunk(unsigned int xid, struct file *dst_file,
 		return rc;
 	}
 
-	src_file = fdget(srcfd);
+	src_file = fdget(cc->src_fd);
 	if (!src_file.file) {
 		rc = -EBADF;
 		goto out_drop_write;
@@ -72,8 +71,9 @@ static long cifs_ioctl_copychunk(unsigned int xid, struct file *dst_file,
 	if (S_ISDIR(src_inode->i_mode))
 		goto out_fput;
 
-	rc = cifs_file_copychunk_range(xid, src_file.file, 0, dst_file, 0,
-					src_inode->i_size, 0);
+	rc = cifs_file_copychunk_range(xid, src_file.file, cc->src_offset,
+				       dst_file, cc->dst_offset,
+				       cc->length, 0);
 	if (rc > 0)
 		rc = 0;
 out_fput:
@@ -81,6 +81,44 @@ out_fput:
 out_drop_write:
 	mnt_drop_write_file(dst_file);
 	return rc;
+}
+
+static long cifs_ioctl_copychunk(unsigned int xid, struct file *dst_file,
+				 unsigned long p)
+{
+	void __user *arg = (void __user *)p;
+	struct smb_srv_copychunk cc;
+
+	cifs_dbg(FYI, "ioctl copychunk range\n");
+
+	if (copy_from_user(&cc, arg, sizeof(cc)))
+		return -EFAULT;
+
+	return _cifs_ioctl_copychunk(xid, dst_file, &cc);
+}
+
+static long cifs_ioctl_copychunk_file(unsigned int xid, struct file *dst_file,
+				      unsigned long srcfd)
+{
+	struct smb_srv_copychunk cc;
+	struct fd src_file;
+	struct inode *src_inode;
+
+	cifs_dbg(FYI, "ioctl copychunk file\n");
+
+	src_file = fdget(srcfd);
+	if (!src_file.file) {
+		mnt_drop_write_file(dst_file);
+		return -EBADF;
+	}
+	src_inode = file_inode(src_file.file);
+
+	memset(&cc, 0, sizeof(struct smb_srv_copychunk));
+	cc.src_fd = srcfd;
+	cc.length = src_inode->i_size;
+	fdput(src_file);
+
+	return _cifs_ioctl_copychunk(xid, dst_file, &cc);
 }
 
 static long smb_mnt_get_fsinfo(unsigned int xid, struct cifs_tcon *tcon,
@@ -194,6 +232,9 @@ long cifs_ioctl(struct file *filep, unsigned int command, unsigned long arg)
 			}
 			break;
 		case CIFS_IOC_COPYCHUNK_FILE:
+			rc = cifs_ioctl_copychunk_file(xid, filep, arg);
+			break;
+		case CIFS_IOC_COPYCHUNK:
 			rc = cifs_ioctl_copychunk(xid, filep, arg);
 			break;
 		case CIFS_IOC_SET_INTEGRITY:
