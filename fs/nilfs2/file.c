@@ -98,7 +98,6 @@ static vm_fault_t nilfs_page_mkwrite(struct vm_fault *vmf)
 		goto out;
 	}
 
-	err = 0;
 	file_update_time(vma->vm_file);
 	ret = block_page_mkwrite(vma, vmf, nilfs_get_block, &err);
 	if (ret) {
