@@ -1,0 +1,11 @@
+Importing dmi based on 4.18
+$ git clone -s -l -n -q . ../quilt-tmp
+$ cd ../quilt-tmp
+$ git reset --hard 94710cac0ef4ee177a63b5227664b38c95bbf703
+HEAD is now at 94710cac0ef4 Linux 4.18
+$ git am -s --patch-format=mbox ../quilt/dmi/drivers-acpi-skip-dmi-call.patch
+Applying: ACPI / bus: Only call dmi_check_system on X86
+$ cd /home/sfr/kernels/next/next
+$ git fetch -f ../quilt-tmp master:dmi/master
+From ../quilt-tmp
+ + 7f73745fec52...767b174cad46 master     -> dmi/master  (forced update)
