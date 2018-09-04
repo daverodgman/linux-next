@@ -1,0 +1,16 @@
+next/soc
+
+next/dt
+	socfgpa/updates
+		git://git.kernel.org/pub/scm/linux/kernel/git/dinguyen/linux tags/socfpga_updates_for_v4.20_part1
+
+next/drivers
+	drivers/tee
+		git://git.linaro.org/people/jens.wiklander/linux-tee tags/tee-drv-for-4.20
+
+next/defconfig
+
+next/late
+
+fixes
+
