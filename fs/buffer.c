@@ -2455,21 +2455,21 @@ EXPORT_SYMBOL(block_commit_write);
  * Direct callers of this function should protect against filesystem freezing
  * using sb_start_pagefault() - sb_end_pagefault() functions.
  */
-int block_page_mkwrite(struct vm_area_struct *vma, struct vm_fault *vmf,
-			 get_block_t get_block)
+vm_fault_t block_page_mkwrite(struct vm_area_struct *vma, struct vm_fault *vmf,
+			 get_block_t get_block, int *err)
 {
 	struct page *page = vmf->page;
 	struct inode *inode = file_inode(vma->vm_file);
 	unsigned long end;
 	loff_t size;
-	int ret;
+	int err1;
 
 	lock_page(page);
 	size = i_size_read(inode);
 	if ((page->mapping != inode->i_mapping) ||
 	    (page_offset(page) > size)) {
 		/* We overload EFAULT to mean page got truncated */
-		ret = -EFAULT;
+		err1 = -EFAULT;
 		goto out_unlock;
 	}
 
@@ -2479,18 +2479,20 @@ int block_page_mkwrite(struct vm_area_struct *vma, struct vm_fault *vmf,
 	else
 		end = PAGE_SIZE;
 
-	ret = __block_write_begin(page, 0, end, get_block);
-	if (!ret)
-		ret = block_commit_write(page, 0, end);
+	err1 = __block_write_begin(page, 0, end, get_block);
+	if (!err1)
+		err1 = block_commit_write(page, 0, end);
 
-	if (unlikely(ret < 0))
+	if (unlikely(err1 < 0))
 		goto out_unlock;
+	*err = err1;
 	set_page_dirty(page);
 	wait_for_stable_page(page);
 	return 0;
 out_unlock:
 	unlock_page(page);
-	return ret;
+	*err = err1;
+	return block_page_mkwrite_return(err1);
 }
 EXPORT_SYMBOL(block_page_mkwrite);
 
