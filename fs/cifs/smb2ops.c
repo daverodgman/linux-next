@@ -74,6 +74,12 @@ smb2_add_credits(struct TCP_Server_Info *server, const unsigned int add,
 	int *val, rc = 0;
 	spin_lock(&server->req_lock);
 	val = server->ops->get_credits_field(server, optype);
+
+	/* eg found case where write overlapping reconnect messed up credits */
+	if (((optype & CIFS_OP_MASK) == CIFS_NEG_OP) && (*val != 0))
+		trace_smb3_reconnect_with_invalid_credits(server->CurrentMid,
+			server->hostname, *val);
+
 	*val += add;
 	if (*val > 65000) {
 		*val = 65000; /* Don't get near 64K credits, avoid srv bugs */
@@ -630,7 +636,10 @@ smb2_is_path_accessible(const unsigned int xid, struct cifs_tcon *tcon,
 	oparms.tcon = tcon;
 	oparms.desired_access = FILE_READ_ATTRIBUTES;
 	oparms.disposition = FILE_OPEN;
-	oparms.create_options = 0;
+	if (backup_cred(cifs_sb))
+		oparms.create_options = CREATE_OPEN_BACKUP_INTENT;
+	else
+		oparms.create_options = 0;
 	oparms.fid = &fid;
 	oparms.reconnect = false;
 
@@ -779,7 +788,10 @@ smb2_query_eas(const unsigned int xid, struct cifs_tcon *tcon,
 	oparms.tcon = tcon;
 	oparms.desired_access = FILE_READ_EA;
 	oparms.disposition = FILE_OPEN;
-	oparms.create_options = 0;
+	if (backup_cred(cifs_sb))
+		oparms.create_options = CREATE_OPEN_BACKUP_INTENT;
+	else
+		oparms.create_options = 0;
 	oparms.fid = &fid;
 	oparms.reconnect = false;
 
@@ -858,7 +870,10 @@ smb2_set_ea(const unsigned int xid, struct cifs_tcon *tcon,
 	oparms.tcon = tcon;
 	oparms.desired_access = FILE_WRITE_EA;
 	oparms.disposition = FILE_OPEN;
-	oparms.create_options = 0;
+	if (backup_cred(cifs_sb))
+		oparms.create_options = CREATE_OPEN_BACKUP_INTENT;
+	else
+		oparms.create_options = 0;
 	oparms.fid = &fid;
 	oparms.reconnect = false;
 
@@ -1292,7 +1307,7 @@ smb2_set_file_size(const unsigned int xid, struct cifs_tcon *tcon,
 	}
 
 	return SMB2_set_eof(xid, tcon, cfile->fid.persistent_fid,
-			    cfile->fid.volatile_fid, cfile->pid, &eof, false);
+			    cfile->fid.volatile_fid, cfile->pid, &eof);
 }
 
 static int
@@ -1453,7 +1468,10 @@ smb2_query_dir_first(const unsigned int xid, struct cifs_tcon *tcon,
 	oparms.tcon = tcon;
 	oparms.desired_access = FILE_READ_ATTRIBUTES | FILE_READ_DATA;
 	oparms.disposition = FILE_OPEN;
-	oparms.create_options = 0;
+	if (backup_cred(cifs_sb))
+		oparms.create_options = CREATE_OPEN_BACKUP_INTENT;
+	else
+		oparms.create_options = 0;
 	oparms.fid = fid;
 	oparms.reconnect = false;
 
@@ -1544,7 +1562,7 @@ smb2_oplock_response(struct cifs_tcon *tcon, struct cifs_fid *fid,
 				 CIFS_CACHE_READ(cinode) ? 1 : 0);
 }
 
-static void
+void
 smb2_set_related(struct smb_rqst *rqst)
 {
 	struct smb2_sync_hdr *shdr;
@@ -1555,7 +1573,7 @@ smb2_set_related(struct smb_rqst *rqst)
 
 char smb2_padding[7] = {0, 0, 0, 0, 0, 0, 0};
 
-static void
+void
 smb2_set_next_command(struct TCP_Server_Info *server, struct smb_rqst *rqst)
 {
 	struct smb2_sync_hdr *shdr;
@@ -1598,7 +1616,7 @@ smb2_queryfs(const unsigned int xid, struct cifs_tcon *tcon,
 		flags |= CIFS_TRANSFORM_REQ;
 
 	memset(rqst, 0, sizeof(rqst));
-	memset(resp_buftype, 0, sizeof(resp_buftype));
+	resp_buftype[0] = resp_buftype[1] = resp_buftype[2] = CIFS_NO_BUFFER;
 	memset(rsp_iov, 0, sizeof(rsp_iov));
 
 	memset(&open_iov, 0, sizeof(open_iov));
@@ -1857,7 +1875,10 @@ smb2_query_symlink(const unsigned int xid, struct cifs_tcon *tcon,
 	oparms.tcon = tcon;
 	oparms.desired_access = FILE_READ_ATTRIBUTES;
 	oparms.disposition = FILE_OPEN;
-	oparms.create_options = 0;
+	if (backup_cred(cifs_sb))
+		oparms.create_options = CREATE_OPEN_BACKUP_INTENT;
+	else
+		oparms.create_options = 0;
 	oparms.fid = &fid;
 	oparms.reconnect = false;
 
@@ -3639,7 +3660,7 @@ struct smb_version_values smb21_values = {
 struct smb_version_values smb3any_values = {
 	.version_string = SMB3ANY_VERSION_STRING,
 	.protocol_id = SMB302_PROT_ID, /* doesn't matter, send protocol array */
-	.req_capabilities = SMB2_GLOBAL_CAP_DFS | SMB2_GLOBAL_CAP_LEASING | SMB2_GLOBAL_CAP_LARGE_MTU | SMB2_GLOBAL_CAP_PERSISTENT_HANDLES | SMB2_GLOBAL_CAP_ENCRYPTION,
+	.req_capabilities = SMB2_GLOBAL_CAP_DFS | SMB2_GLOBAL_CAP_LEASING | SMB2_GLOBAL_CAP_LARGE_MTU | SMB2_GLOBAL_CAP_PERSISTENT_HANDLES | SMB2_GLOBAL_CAP_ENCRYPTION | SMB2_GLOBAL_CAP_DIRECTORY_LEASING,
 	.large_lock_type = 0,
 	.exclusive_lock_type = SMB2_LOCKFLAG_EXCLUSIVE_LOCK,
 	.shared_lock_type = SMB2_LOCKFLAG_SHARED_LOCK,
@@ -3660,7 +3681,7 @@ struct smb_version_values smb3any_values = {
 struct smb_version_values smbdefault_values = {
 	.version_string = SMBDEFAULT_VERSION_STRING,
 	.protocol_id = SMB302_PROT_ID, /* doesn't matter, send protocol array */
-	.req_capabilities = SMB2_GLOBAL_CAP_DFS | SMB2_GLOBAL_CAP_LEASING | SMB2_GLOBAL_CAP_LARGE_MTU | SMB2_GLOBAL_CAP_PERSISTENT_HANDLES | SMB2_GLOBAL_CAP_ENCRYPTION,
+	.req_capabilities = SMB2_GLOBAL_CAP_DFS | SMB2_GLOBAL_CAP_LEASING | SMB2_GLOBAL_CAP_LARGE_MTU | SMB2_GLOBAL_CAP_PERSISTENT_HANDLES | SMB2_GLOBAL_CAP_ENCRYPTION | SMB2_GLOBAL_CAP_DIRECTORY_LEASING,
 	.large_lock_type = 0,
 	.exclusive_lock_type = SMB2_LOCKFLAG_EXCLUSIVE_LOCK,
 	.shared_lock_type = SMB2_LOCKFLAG_SHARED_LOCK,
@@ -3681,7 +3702,7 @@ struct smb_version_values smbdefault_values = {
 struct smb_version_values smb30_values = {
 	.version_string = SMB30_VERSION_STRING,
 	.protocol_id = SMB30_PROT_ID,
-	.req_capabilities = SMB2_GLOBAL_CAP_DFS | SMB2_GLOBAL_CAP_LEASING | SMB2_GLOBAL_CAP_LARGE_MTU | SMB2_GLOBAL_CAP_PERSISTENT_HANDLES | SMB2_GLOBAL_CAP_ENCRYPTION,
+	.req_capabilities = SMB2_GLOBAL_CAP_DFS | SMB2_GLOBAL_CAP_LEASING | SMB2_GLOBAL_CAP_LARGE_MTU | SMB2_GLOBAL_CAP_PERSISTENT_HANDLES | SMB2_GLOBAL_CAP_ENCRYPTION | SMB2_GLOBAL_CAP_DIRECTORY_LEASING,
 	.large_lock_type = 0,
 	.exclusive_lock_type = SMB2_LOCKFLAG_EXCLUSIVE_LOCK,
 	.shared_lock_type = SMB2_LOCKFLAG_SHARED_LOCK,
@@ -3702,7 +3723,7 @@ struct smb_version_values smb30_values = {
 struct smb_version_values smb302_values = {
 	.version_string = SMB302_VERSION_STRING,
 	.protocol_id = SMB302_PROT_ID,
-	.req_capabilities = SMB2_GLOBAL_CAP_DFS | SMB2_GLOBAL_CAP_LEASING | SMB2_GLOBAL_CAP_LARGE_MTU | SMB2_GLOBAL_CAP_PERSISTENT_HANDLES | SMB2_GLOBAL_CAP_ENCRYPTION,
+	.req_capabilities = SMB2_GLOBAL_CAP_DFS | SMB2_GLOBAL_CAP_LEASING | SMB2_GLOBAL_CAP_LARGE_MTU | SMB2_GLOBAL_CAP_PERSISTENT_HANDLES | SMB2_GLOBAL_CAP_ENCRYPTION | SMB2_GLOBAL_CAP_DIRECTORY_LEASING,
 	.large_lock_type = 0,
 	.exclusive_lock_type = SMB2_LOCKFLAG_EXCLUSIVE_LOCK,
 	.shared_lock_type = SMB2_LOCKFLAG_SHARED_LOCK,
@@ -3723,7 +3744,7 @@ struct smb_version_values smb302_values = {
 struct smb_version_values smb311_values = {
 	.version_string = SMB311_VERSION_STRING,
 	.protocol_id = SMB311_PROT_ID,
-	.req_capabilities = SMB2_GLOBAL_CAP_DFS | SMB2_GLOBAL_CAP_LEASING | SMB2_GLOBAL_CAP_LARGE_MTU | SMB2_GLOBAL_CAP_PERSISTENT_HANDLES | SMB2_GLOBAL_CAP_ENCRYPTION,
+	.req_capabilities = SMB2_GLOBAL_CAP_DFS | SMB2_GLOBAL_CAP_LEASING | SMB2_GLOBAL_CAP_LARGE_MTU | SMB2_GLOBAL_CAP_PERSISTENT_HANDLES | SMB2_GLOBAL_CAP_ENCRYPTION | SMB2_GLOBAL_CAP_DIRECTORY_LEASING,
 	.large_lock_type = 0,
 	.exclusive_lock_type = SMB2_LOCKFLAG_EXCLUSIVE_LOCK,
 	.shared_lock_type = SMB2_LOCKFLAG_SHARED_LOCK,
