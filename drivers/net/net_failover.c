@@ -19,7 +19,6 @@
 #include <linux/ethtool.h>
 #include <linux/module.h>
 #include <linux/slab.h>
-#include <linux/netdevice.h>
 #include <linux/netpoll.h>
 #include <linux/rtnetlink.h>
 #include <linux/if_vlan.h>
@@ -602,6 +601,9 @@ static int net_failover_slave_unregister(struct net_device *slave_dev,
 	nfo_info = netdev_priv(failover_dev);
 	primary_dev = rtnl_dereference(nfo_info->primary_dev);
 	standby_dev = rtnl_dereference(nfo_info->standby_dev);
+
+	if (WARN_ON_ONCE(slave_dev != primary_dev && slave_dev != standby_dev))
+		return -ENODEV;
 
 	vlan_vids_del_by_dev(slave_dev, failover_dev);
 	dev_uc_unsync(slave_dev, failover_dev);
