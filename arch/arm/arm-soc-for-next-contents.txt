@@ -1,4 +1,6 @@
 next/soc
+	patch
+		ARM: u300: Delete dummy SPI chip
 
 next/dt
 	socfgpa/updates
@@ -13,4 +15,10 @@ next/defconfig
 next/late
 
 fixes
+	patch
+		firmware: arm_scmi: fix divide by zero when sustained_perf_level is zero
+	<no branch> (d07f05fb86439c41dd6967c94be3ba3837b21567)
+		https://github.com/Broadcom/stblinux tags/arm-soc/for-4.19/drivers-fixes
+	patch
+		memory: ti-aemif: fix a potential NULL-pointer dereference
 
