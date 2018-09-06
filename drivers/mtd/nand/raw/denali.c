@@ -1,15 +1,10 @@
+// SPDX-License-Identifier: GPL-2.0
 /*
  * NAND Flash Controller Device Driver
  * Copyright © 2009-2010, Intel Corporation and its suppliers.
  *
- * This program is free software; you can redistribute it and/or modify it
- * under the terms and conditions of the GNU General Public License,
- * version 2, as published by the Free Software Foundation.
- *
- * This program is distributed in the hope it will be useful, but WITHOUT
- * ANY WARRANTY; without even the implied warranty of MERCHANTABILITY or
- * FITNESS FOR A PARTICULAR PURPOSE.  See the GNU General Public License for
- * more details.
+ * Copyright (c) 2017 Socionext Inc.
+ *   Reworked by Masahiro Yamada <yamada.masahiro@socionext.com>
  */
 
 #include <linux/bitfield.h>
@@ -24,8 +19,6 @@
 #include <linux/spinlock.h>
 
 #include "denali.h"
-
-MODULE_LICENSE("GPL");
 
 #define DENALI_NAND_NAME    "denali-nand"
 
@@ -277,15 +270,6 @@ static uint8_t denali_read_byte(struct mtd_info *mtd)
 static void denali_write_byte(struct mtd_info *mtd, uint8_t byte)
 {
 	denali_write_buf(mtd, &byte, 1);
-}
-
-static uint16_t denali_read_word(struct mtd_info *mtd)
-{
-	uint16_t word;
-
-	denali_read_buf16(mtd, (uint8_t *)&word, 2);
-
-	return word;
 }
 
 static void denali_cmd_ctrl(struct mtd_info *mtd, int dat, unsigned int ctrl)
@@ -1354,7 +1338,6 @@ int denali_init(struct denali_nand_info *denali)
 	chip->select_chip = denali_select_chip;
 	chip->read_byte = denali_read_byte;
 	chip->write_byte = denali_write_byte;
-	chip->read_word = denali_read_word;
 	chip->cmd_ctrl = denali_cmd_ctrl;
 	chip->dev_ready = denali_dev_ready;
 	chip->waitfunc = denali_waitfunc;
@@ -1401,3 +1384,7 @@ void denali_remove(struct denali_nand_info *denali)
 	denali_disable_irq(denali);
 }
 EXPORT_SYMBOL(denali_remove);
+
+MODULE_DESCRIPTION("Driver core for Denali NAND controller");
+MODULE_AUTHOR("Intel Corporation and its suppliers");
+MODULE_LICENSE("GPL v2");

@@ -278,18 +278,6 @@ static uint8_t nand_read_byte16(struct mtd_info *mtd)
 }
 
 /**
- * nand_read_word - [DEFAULT] read one word from the chip
- * @mtd: MTD device structure
- *
- * Default read function for 16bit buswidth without endianness conversion.
- */
-static u16 nand_read_word(struct mtd_info *mtd)
-{
-	struct nand_chip *chip = mtd_to_nand(mtd);
-	return readw(chip->IO_ADDR_R);
-}
-
-/**
  * nand_select_chip - [DEFAULT] control CE line
  * @mtd: MTD device structure
  * @chipnr: chipnumber to select, -1 for deselect
@@ -2246,6 +2234,28 @@ static int nand_get_features_op(struct nand_chip *chip, u8 feature,
 	return 0;
 }
 
+static int nand_wait_rdy_op(struct nand_chip *chip, unsigned int timeout_ms,
+			    unsigned int delay_ns)
+{
+	if (chip->exec_op) {
+		struct nand_op_instr instrs[] = {
+			NAND_OP_WAIT_RDY(PSEC_TO_MSEC(timeout_ms),
+					 PSEC_TO_NSEC(delay_ns)),
+		};
+		struct nand_operation op = NAND_OPERATION(instrs);
+
+		return nand_exec_op(chip, &op);
+	}
+
+	/* Apply delay or wait for ready/busy pin */
+	if (!chip->dev_ready)
+		udelay(chip->chip_delay);
+	else
+		nand_wait_ready(nand_to_mtd(chip));
+
+	return 0;
+}
+
 /**
  * nand_reset_op - Do a reset operation
  * @chip: The NAND chip
@@ -3524,6 +3534,17 @@ static int nand_setup_read_retry(struct mtd_info *mtd, int retry_mode)
 	return chip->setup_read_retry(mtd, retry_mode);
 }
 
+static void nand_wait_readrdy(struct nand_chip *chip)
+{
+	const struct nand_sdr_timings *sdr;
+
+	if (!(chip->options & NAND_NEED_READRDY))
+		return;
+
+	sdr = nand_get_sdr_timings(&chip->data_interface);
+	WARN_ON(nand_wait_rdy_op(chip, PSEC_TO_MSEC(sdr->tR_max), 0));
+}
+
 /**
  * nand_do_read_ops - [INTERN] Read data with ECC
  * @mtd: MTD device structure
@@ -3631,13 +3652,7 @@ read_retry:
 				}
 			}
 
-			if (chip->options & NAND_NEED_READRDY) {
-				/* Apply delay or wait for ready/busy pin */
-				if (!chip->dev_ready)
-					udelay(chip->chip_delay);
-				else
-					nand_wait_ready(mtd);
-			}
+			nand_wait_readrdy(chip);
 
 			if (mtd->ecc_stats.failed - ecc_failures) {
 				if (retry_mode + 1 < chip->read_retries) {
@@ -3908,13 +3923,7 @@ static int nand_do_read_oob(struct mtd_info *mtd, loff_t from,
 		len = min(len, readlen);
 		buf = nand_transfer_oob(mtd, buf, ops, len);
 
-		if (chip->options & NAND_NEED_READRDY) {
-			/* Apply delay or wait for ready/busy pin */
-			if (!chip->dev_ready)
-				udelay(chip->chip_delay);
-			else
-				nand_wait_ready(mtd);
-		}
+		nand_wait_readrdy(chip);
 
 		max_bitflips = max_t(unsigned int, max_bitflips, ret);
 
@@ -4986,8 +4995,6 @@ static void nand_set_defaults(struct nand_chip *chip)
 	/* If called twice, pointers that depend on busw may need to be reset */
 	if (!chip->read_byte || chip->read_byte == nand_read_byte)
 		chip->read_byte = busw ? nand_read_byte16 : nand_read_byte;
-	if (!chip->read_word)
-		chip->read_word = nand_read_word;
 	if (!chip->block_bad)
 		chip->block_bad = nand_block_bad;
 	if (!chip->block_markbad)
