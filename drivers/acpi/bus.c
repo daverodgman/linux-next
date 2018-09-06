@@ -1033,7 +1033,7 @@ void __init acpi_early_init(void)
 	/*
 	 * If the machine falls into the DMI check table,
 	 * DSDT will be copied to memory.
-	 * Note that calling dmi_check_system here on other architectures
+	 * Note that calling dmi_check_system() here on other architectures
 	 * would not be OK because only x86 initializes dmi early enough.
 	 * Thankfully only x86 systems need such quirks for now.
 	 */
