@@ -246,7 +246,7 @@ unsigned long long sched_clock(void)
 
 bool using_native_sched_clock(void)
 {
-	return pv_time_ops.sched_clock == native_sched_clock;
+	return pv_ops.time.sched_clock == native_sched_clock;
 }
 #else
 unsigned long long
@@ -1415,7 +1415,7 @@ static bool __init determine_cpu_tsc_frequencies(bool early)
 
 static unsigned long __init get_loops_per_jiffy(void)
 {
-	unsigned long lpj = tsc_khz * KHZ;
+	u64 lpj = (u64)tsc_khz * KHZ;
 
 	do_div(lpj, HZ);
 	return lpj;
