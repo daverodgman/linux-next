@@ -21,4 +21,6 @@ fixes
 		https://github.com/Broadcom/stblinux tags/arm-soc/for-4.19/drivers-fixes
 	patch
 		memory: ti-aemif: fix a potential NULL-pointer dereference
+	<no branch> (d177c8b61d6b4ef360b1c2682e4d8e3bae01738b)
+		https://git.kernel.org/pub/scm/linux/kernel/git/sunxi/linux tags/sunxi-fixes-for-4.19
 
