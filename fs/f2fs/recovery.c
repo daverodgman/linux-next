@@ -675,6 +675,9 @@ int f2fs_recover_fsync_data(struct f2fs_sb_info *sbi, bool check_only)
 
 	need_writecp = true;
 
+	/* quota is not fully updated due to the lack of user information. */
+	set_sbi_flag(sbi, SBI_NEED_FSCK);
+
 	/* step #2: recover data */
 	err = recover_data(sbi, &inode_list, &dir_list);
 	if (!err)
@@ -697,11 +700,15 @@ skip:
 	/* let's drop all the directory inodes for clean checkpoint */
 	destroy_fsync_dnodes(&dir_list);
 
-	if (!err && need_writecp) {
-		struct cp_control cpc = {
-			.reason = CP_RECOVERY,
-		};
-		err = f2fs_write_checkpoint(sbi, &cpc);
+	if (need_writecp) {
+		set_sbi_flag(sbi, SBI_IS_RECOVERED);
+
+		if (!err) {
+			struct cp_control cpc = {
+				.reason = CP_RECOVERY,
+			};
+			err = f2fs_write_checkpoint(sbi, &cpc);
+		}
 	}
 
 	kmem_cache_destroy(fsync_entry_slab);

@@ -207,7 +207,7 @@ void f2fs_msg(struct super_block *sb, const char *level, const char *fmt, ...)
 	va_start(args, fmt);
 	vaf.fmt = fmt;
 	vaf.va = &args;
-	printk_ratelimited("%sF2FS-fs (%s): %pV\n", level, sb->s_id, &vaf);
+	printk("%sF2FS-fs (%s): %pV\n", level, sb->s_id, &vaf);
 	va_end(args);
 }
 
@@ -360,7 +360,6 @@ static int f2fs_check_quota_options(struct f2fs_sb_info *sbi)
 static int parse_options(struct super_block *sb, char *options)
 {
 	struct f2fs_sb_info *sbi = F2FS_SB(sb);
-	struct request_queue *q;
 	substring_t args[MAX_OPT_ARGS];
 	char *p, *name;
 	int arg = 0;
@@ -415,14 +414,7 @@ static int parse_options(struct super_block *sb, char *options)
 				return -EINVAL;
 			break;
 		case Opt_discard:
-			q = bdev_get_queue(sb->s_bdev);
-			if (blk_queue_discard(q)) {
-				set_opt(sbi, DISCARD);
-			} else if (!f2fs_sb_has_blkzoned(sb)) {
-				f2fs_msg(sb, KERN_WARNING,
-					"mounting with \"discard\" option, but "
-					"the device does not support discard");
-			}
+			set_opt(sbi, DISCARD);
 			break;
 		case Opt_nodiscard:
 			if (f2fs_sb_has_blkzoned(sb)) {
@@ -1032,7 +1024,8 @@ static void f2fs_put_super(struct super_block *sb)
 	/* be sure to wait for any on-going discard commands */
 	dropped = f2fs_wait_discard_bios(sbi);
 
-	if (f2fs_discard_en(sbi) && !sbi->discard_blks && !dropped) {
+	if ((f2fs_hw_support_discard(sbi) || f2fs_hw_should_discard(sbi)) &&
+					!sbi->discard_blks && !dropped) {
 		struct cp_control cpc = {
 			.reason = CP_UMOUNT | CP_TRIMMED,
 		};
@@ -1399,8 +1392,7 @@ static void default_options(struct f2fs_sb_info *sbi)
 	set_opt(sbi, NOHEAP);
 	sbi->sb->s_flags |= SB_LAZYTIME;
 	set_opt(sbi, FLUSH_MERGE);
-	if (blk_queue_discard(bdev_get_queue(sbi->sb->s_bdev)))
-		set_opt(sbi, DISCARD);
+	set_opt(sbi, DISCARD);
 	if (f2fs_sb_has_blkzoned(sbi->sb))
 		set_opt_mode(sbi, F2FS_MOUNT_LFS);
 	else
@@ -1852,7 +1844,9 @@ static int f2fs_quota_off(struct super_block *sb, int type)
 	if (!inode || !igrab(inode))
 		return dquot_quota_off(sb, type);
 
-	f2fs_quota_sync(sb, type);
+	err = f2fs_quota_sync(sb, type);
+	if (err)
+		goto out_put;
 
 	err = dquot_quota_off(sb, type);
 	if (err || f2fs_sb_has_quota_ino(sb))
@@ -1871,9 +1865,20 @@ out_put:
 void f2fs_quota_off_umount(struct super_block *sb)
 {
 	int type;
+	int err;
 
-	for (type = 0; type < MAXQUOTAS; type++)
-		f2fs_quota_off(sb, type);
+	for (type = 0; type < MAXQUOTAS; type++) {
+		err = f2fs_quota_off(sb, type);
+		if (err) {
+			int ret = dquot_quota_off(sb, type);
+
+			f2fs_msg(sb, KERN_ERR,
+				"Fail to turn off disk quota "
+				"(type: %d, err: %d, ret:%d), Please "
+				"run fsck to fix it.", type, err, ret);
+			set_sbi_flag(F2FS_SB(sb), SBI_NEED_FSCK);
+		}
+	}
 }
 
 static int f2fs_get_projid(struct inode *inode, kprojid_t *projid)
@@ -3175,6 +3180,9 @@ static void kill_f2fs_super(struct super_block *sb)
 			};
 			f2fs_write_checkpoint(sbi, &cpc);
 		}
+
+		if (is_sbi_flag_set(sbi, SBI_IS_RECOVERED) && f2fs_readonly(sb))
+			sb->s_flags &= ~SB_RDONLY;
 	}
 	kill_block_super(sb);
 }

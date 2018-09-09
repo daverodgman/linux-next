@@ -53,6 +53,9 @@ static struct posix_acl *f2fs_acl_from_disk(const char *value, size_t size)
 	struct f2fs_acl_entry *entry = (struct f2fs_acl_entry *)(hdr + 1);
 	const char *end = value + size;
 
+	if (size < sizeof(struct f2fs_acl_header))
+		return ERR_PTR(-EINVAL);
+
 	if (hdr->a_version != cpu_to_le32(F2FS_ACL_VERSION))
 		return ERR_PTR(-EINVAL);
 
@@ -401,6 +404,8 @@ int f2fs_init_acl(struct inode *inode, struct inode *dir, struct page *ipage,
 					       ipage);
 		posix_acl_release(acl);
 	}
+	if (!default_acl && !acl)
+		cache_no_acl(inode);
 
 	return error;
 }
