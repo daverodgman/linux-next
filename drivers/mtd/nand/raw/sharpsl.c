@@ -59,11 +59,10 @@ static inline struct sharpsl_nand *mtd_to_sharpsl(struct mtd_info *mtd)
  *	NAND_ALE: bit 2 -> bit 2
  *
  */
-static void sharpsl_nand_hwcontrol(struct mtd_info *mtd, int cmd,
+static void sharpsl_nand_hwcontrol(struct nand_chip *chip, int cmd,
 				   unsigned int ctrl)
 {
-	struct sharpsl_nand *sharpsl = mtd_to_sharpsl(mtd);
-	struct nand_chip *chip = mtd_to_nand(mtd);
+	struct sharpsl_nand *sharpsl = mtd_to_sharpsl(nand_to_mtd(chip));
 
 	if (ctrl & NAND_CTRL_CHANGE) {
 		unsigned char bits = ctrl & 0x07;
@@ -79,21 +78,22 @@ static void sharpsl_nand_hwcontrol(struct mtd_info *mtd, int cmd,
 		writeb(cmd, chip->IO_ADDR_W);
 }
 
-static int sharpsl_nand_dev_ready(struct mtd_info *mtd)
+static int sharpsl_nand_dev_ready(struct nand_chip *chip)
 {
-	struct sharpsl_nand *sharpsl = mtd_to_sharpsl(mtd);
+	struct sharpsl_nand *sharpsl = mtd_to_sharpsl(nand_to_mtd(chip));
 	return !((readb(sharpsl->io + FLASHCTL) & FLRYBY) == 0);
 }
 
-static void sharpsl_nand_enable_hwecc(struct mtd_info *mtd, int mode)
+static void sharpsl_nand_enable_hwecc(struct nand_chip *chip, int mode)
 {
-	struct sharpsl_nand *sharpsl = mtd_to_sharpsl(mtd);
+	struct sharpsl_nand *sharpsl = mtd_to_sharpsl(nand_to_mtd(chip));
 	writeb(0, sharpsl->io + ECCCLRR);
 }
 
-static int sharpsl_nand_calculate_ecc(struct mtd_info *mtd, const u_char * dat, u_char * ecc_code)
+static int sharpsl_nand_calculate_ecc(struct nand_chip *chip,
+				      const u_char * dat, u_char * ecc_code)
 {
-	struct sharpsl_nand *sharpsl = mtd_to_sharpsl(mtd);
+	struct sharpsl_nand *sharpsl = mtd_to_sharpsl(nand_to_mtd(chip));
 	ecc_code[0] = ~readb(sharpsl->io + ECCLPUB);
 	ecc_code[1] = ~readb(sharpsl->io + ECCLPLB);
 	ecc_code[2] = (~readb(sharpsl->io + ECCCP) << 2) | 0x03;
@@ -171,7 +171,7 @@ static int sharpsl_nand_probe(struct platform_device *pdev)
 	this->ecc.correct = nand_correct_data;
 
 	/* Scan to find existence of the device */
-	err = nand_scan(mtd, 1);
+	err = nand_scan(this, 1);
 	if (err)
 		goto err_scan;
 
@@ -187,7 +187,7 @@ static int sharpsl_nand_probe(struct platform_device *pdev)
 	return 0;
 
 err_add:
-	nand_release(mtd);
+	nand_release(this);
 
 err_scan:
 	iounmap(sharpsl->io);
@@ -205,7 +205,7 @@ static int sharpsl_nand_remove(struct platform_device *pdev)
 	struct sharpsl_nand *sharpsl = platform_get_drvdata(pdev);
 
 	/* Release resources, unregister device */
-	nand_release(nand_to_mtd(&sharpsl->chip));
+	nand_release(&sharpsl->chip);
 
 	iounmap(sharpsl->io);
 
