@@ -71,6 +71,7 @@
 
 extern struct workqueue_struct *ib_wq;
 extern struct workqueue_struct *ib_comp_wq;
+extern struct workqueue_struct *ib_comp_unbound_wq;
 
 union ib_gid {
 	u8	raw[16];
@@ -1485,7 +1486,7 @@ struct ib_ucontext {
 	 * it is set when we are closing the file descriptor and indicates
 	 * that mm_sem may be locked.
 	 */
-	int			closing;
+	bool closing;
 
 	bool cleanup_retryable;
 
@@ -1570,9 +1571,10 @@ struct ib_ah {
 typedef void (*ib_comp_handler)(struct ib_cq *cq, void *cq_context);
 
 enum ib_poll_context {
-	IB_POLL_DIRECT,		/* caller context, no hw completions */
-	IB_POLL_SOFTIRQ,	/* poll from softirq context */
-	IB_POLL_WORKQUEUE,	/* poll from workqueue */
+	IB_POLL_DIRECT,		   /* caller context, no hw completions */
+	IB_POLL_SOFTIRQ,	   /* poll from softirq context */
+	IB_POLL_WORKQUEUE,	   /* poll from workqueue */
+	IB_POLL_UNBOUND_WORKQUEUE, /* poll from unbound workqueue */
 };
 
 struct ib_cq {
@@ -1589,6 +1591,7 @@ struct ib_cq {
 		struct irq_poll		iop;
 		struct work_struct	work;
 	};
+	struct workqueue_struct *comp_wq;
 	/*
 	 * Implementation details of the RDMA core, don't use in drivers:
 	 */
@@ -2253,10 +2256,11 @@ struct ib_device {
 	struct list_head              event_handler_list;
 	spinlock_t                    event_handler_lock;
 
-	spinlock_t                    client_data_lock;
+	rwlock_t			client_data_lock;
 	struct list_head              core_list;
 	/* Access to the client_data_list is protected by the client_data_lock
-	 * spinlock and the lists_rwsem read-write semaphore */
+	 * rwlock and the lists_rwsem read-write semaphore
+	 */
 	struct list_head              client_data_list;
 
 	struct ib_cache               cache;
@@ -2536,6 +2540,9 @@ struct ib_device {
 
 	struct module               *owner;
 	struct device                dev;
+	/* First group for device attributes, NULL terminated array */
+	const struct attribute_group	*groups[2];
+
 	struct kobject               *ports_parent;
 	struct list_head             port_list;
 
