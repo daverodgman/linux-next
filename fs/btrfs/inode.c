@@ -2084,11 +2084,21 @@ static void btrfs_writepage_fixup_worker(struct btrfs_work *work)
 	page = fixup->page;
 again:
 	lock_page(page);
-	if (!page->mapping || !PageDirty(page) || !PageChecked(page)) {
-		ClearPageChecked(page);
-		goto out_page;
-	}
 
+	/*
+	 * before we queued this fixup, we took a reference on the page.
+	 * page->mapping may go NULL, but it shouldn't be moved to a
+	 * different address space.
+	 */
+	if (!page->mapping || !PageDirty(page) || !PageChecked(page))
+		goto out_page;
+
+	/*
+	 * we keep the PageChecked() bit set until we're done with the
+	 * btrfs_start_ordered_extent() dance that we do below.  That
+	 * drops and retakes the page lock, so we don't want new
+	 * fixup workers queued for this page during the churn.
+	 */
 	inode = page->mapping->host;
 	page_start = page_offset(page);
 	page_end = page_offset(page) + PAGE_SIZE - 1;
@@ -2113,33 +2123,46 @@ again:
 
 	ret = btrfs_delalloc_reserve_space(inode, &data_reserved, page_start,
 					   PAGE_SIZE);
-	if (ret) {
-		mapping_set_error(page->mapping, ret);
-		end_extent_writepage(page, ret, page_start, page_end);
-		ClearPageChecked(page);
-		goto out;
-	 }
+	if (ret)
+		goto out_error;
 
 	ret = btrfs_set_extent_delalloc(inode, page_start, page_end, 0,
 					&cached_state, 0);
-	if (ret) {
-		mapping_set_error(page->mapping, ret);
-		end_extent_writepage(page, ret, page_start, page_end);
-		ClearPageChecked(page);
-		goto out;
-	}
+	if (ret)
+		goto out_error;
 
-	ClearPageChecked(page);
-	set_page_dirty(page);
 	btrfs_delalloc_release_extents(BTRFS_I(inode), PAGE_SIZE, false);
+
+	/*
+	 * everything went as planned, we're now the proud owners of a
+	 * Dirty page with delayed allocation bits set and space reserved
+	 * for our COW destination.
+	 *
+	 * The page was dirty when we started, nothing should have cleaned it.
+	 */
+	BUG_ON(!PageDirty(page));
+
 out:
 	unlock_extent_cached(&BTRFS_I(inode)->io_tree, page_start, page_end,
 			     &cached_state);
 out_page:
+	ClearPageChecked(page);
 	unlock_page(page);
 	put_page(page);
 	kfree(fixup);
 	extent_changeset_free(data_reserved);
+	return;
+
+out_error:
+	/*
+	 * We hit ENOSPC or other errors.  Update the mapping and page to
+	 * reflect the errors and clean the page.
+	 */
+	mapping_set_error(page->mapping, ret);
+	end_extent_writepage(page, ret, page_start, page_end);
+	clear_page_dirty_for_io(page);
+	SetPageError(page);
+	goto out;
 }
 
 /*
@@ -2163,6 +2186,13 @@ static int btrfs_writepage_start_hook(struct page *page, u64 start, u64 end)
 	if (TestClearPagePrivate2(page))
 		return 0;
 
+	/*
+	 * PageChecked is set below when we create a fixup worker for this page,
+	 * don't try to create another one if we're already PageChecked()
+	 *
+	 * The extent_io writepage code will redirty the page if we send
+	 * back EAGAIN.
+	 */
 	if (PageChecked(page))
 		return -EAGAIN;
 
@@ -2176,7 +2206,8 @@ static int btrfs_writepage_start_hook(struct page *page, u64 start, u64 end)
 			btrfs_writepage_fixup_worker, NULL, NULL);
 	fixup->page = page;
 	btrfs_queue_work(fs_info->fixup_workers, &fixup->work);
-	return -EBUSY;
+
+	return -EAGAIN;
 }
 
 static int insert_reserved_file_extent(struct btrfs_trans_handle *trans,
@@ -2750,11 +2781,8 @@ static void relink_file_extents(struct new_sa_defrag_extent *new)
 	struct btrfs_path *path;
 	struct sa_defrag_extent_backref *backref;
 	struct sa_defrag_extent_backref *prev = NULL;
-	struct inode *inode;
 	struct rb_node *node;
 	int ret;
-
-	inode = new->inode;
 
 	path = btrfs_alloc_path();
 	if (!path)
@@ -4270,18 +4298,17 @@ int btrfs_delete_subvolume(struct inode *dir, struct dentry *dentry)
 	 * again is not run concurrently.
 	 */
 	spin_lock(&dest->root_item_lock);
-	root_flags = btrfs_root_flags(&dest->root_item);
-	if (dest->send_in_progress == 0) {
-		btrfs_set_root_flags(&dest->root_item,
-				root_flags | BTRFS_ROOT_SUBVOL_DEAD);
-		spin_unlock(&dest->root_item_lock);
-	} else {
+	if (dest->send_in_progress) {
 		spin_unlock(&dest->root_item_lock);
 		btrfs_warn(fs_info,
 			   "attempt to delete subvolume %llu during send",
 			   dest->root_key.objectid);
 		return -EPERM;
 	}
+	root_flags = btrfs_root_flags(&dest->root_item);
+	btrfs_set_root_flags(&dest->root_item,
+			     root_flags | BTRFS_ROOT_SUBVOL_DEAD);
+	spin_unlock(&dest->root_item_lock);
 
 	down_write(&fs_info->subvol_sem);
 
@@ -5235,10 +5262,10 @@ static void evict_inode_truncate_pages(struct inode *inode)
 	truncate_inode_pages_final(&inode->i_data);
 
 	write_lock(&map_tree->lock);
-	while (!RB_EMPTY_ROOT(&map_tree->map)) {
+	while (!RB_EMPTY_ROOT(&map_tree->map.rb_root)) {
 		struct extent_map *em;
 
-		node = rb_first(&map_tree->map);
+		node = rb_first_cached(&map_tree->map);
 		em = rb_entry(node, struct extent_map, rb_node);
 		clear_bit(EXTENT_FLAG_PINNED, &em->flags);
 		clear_bit(EXTENT_FLAG_LOGGING, &em->flags);
@@ -5335,7 +5362,7 @@ static struct btrfs_trans_handle *evict_refill_and_join(struct btrfs_root *root,
 		 * it.
 		 */
 		if (!btrfs_check_space_for_delayed_refs(trans, fs_info) &&
-		    !btrfs_block_rsv_migrate(global_rsv, rsv, min_size, 0))
+		    !btrfs_block_rsv_migrate(global_rsv, rsv, min_size, false))
 			return trans;
 
 		/* If not, commit and try again. */
@@ -6390,8 +6417,7 @@ int btrfs_add_link(struct btrfs_trans_handle *trans,
 	if (ret)
 		return ret;
 
-	ret = btrfs_insert_dir_item(trans, root, name, name_len,
-				    parent_inode, &key,
+	ret = btrfs_insert_dir_item(trans, name, name_len, parent_inode, &key,
 				    btrfs_inode_type(&inode->vfs_inode), index);
 	if (ret == -EEXIST || ret == -EOVERFLOW)
 		goto fail_dir_item;
@@ -6584,7 +6610,7 @@ static int btrfs_link(struct dentry *old_dentry, struct inode *dir,
 	int drop_inode = 0;
 
 	/* do not allow sys_link's with other subvols of the same device */
-	if (root->objectid != BTRFS_I(inode)->root->objectid)
+	if (root->root_key.objectid != BTRFS_I(inode)->root->root_key.objectid)
 		return -EXDEV;
 
 	if (inode->i_nlink >= BTRFS_LINK_MAX)
@@ -6777,9 +6803,9 @@ static noinline int uncompress_inline(struct btrfs_path *path,
  * This also copies inline extents directly into the page.
  */
 struct extent_map *btrfs_get_extent(struct btrfs_inode *inode,
-		struct page *page,
-	    size_t pg_offset, u64 start, u64 len,
-		int create)
+				    struct page *page,
+				    size_t pg_offset, u64 start, u64 len,
+				    int create)
 {
 	struct btrfs_fs_info *fs_info = inode->root->fs_info;
 	int ret;
@@ -6823,18 +6849,20 @@ struct extent_map *btrfs_get_extent(struct btrfs_inode *inode,
 	em->len = (u64)-1;
 	em->block_len = (u64)-1;
 
+	path = btrfs_alloc_path();
 	if (!path) {
-		path = btrfs_alloc_path();
-		if (!path) {
-			err = -ENOMEM;
-			goto out;
-		}
-		/*
-		 * Chances are we'll be called again, so go ahead and do
-		 * readahead
-		 */
-		path->reada = READA_FORWARD;
+		err = -ENOMEM;
+		goto out;
 	}
+
+	/* Chances are we'll be called again, so go ahead and do readahead */
+	path->reada = READA_FORWARD;
+
+	/*
+	 * Unless we're going to uncompress the inline extent, no sleep would
+	 * happen.
+	 */
+	path->leave_spinning = 1;
 
 	ret = btrfs_lookup_file_extent(NULL, root, path, objectid, start, 0);
 	if (ret < 0) {
@@ -6938,6 +6966,8 @@ next:
 		em->orig_block_len = em->len;
 		em->orig_start = em->start;
 		ptr = btrfs_file_extent_inline_start(item) + extent_offset;
+
+		btrfs_set_path_blocking(path);
 		if (!PageUptodate(page)) {
 			if (btrfs_file_extent_compression(leaf, item) !=
 			    BTRFS_COMPRESS_NONE) {
@@ -6985,10 +7015,10 @@ insert:
 	err = btrfs_add_extent_mapping(fs_info, em_tree, &em, start, len);
 	write_unlock(&em_tree->lock);
 out:
+	btrfs_free_path(path);
 
 	trace_btrfs_get_extent(root, inode, em);
 
-	btrfs_free_path(path);
 	if (err) {
 		free_extent_map(em);
 		return ERR_PTR(err);
@@ -9021,7 +9051,7 @@ static int btrfs_truncate(struct inode *inode, bool skip_writeback)
 
 	/* Migrate the slack space for the truncate to our reserve */
 	ret = btrfs_block_rsv_migrate(&fs_info->trans_block_rsv, rsv,
-				      min_size, 0);
+				      min_size, false);
 	BUG_ON(ret);
 
 	/*
@@ -9058,7 +9088,7 @@ static int btrfs_truncate(struct inode *inode, bool skip_writeback)
 
 		btrfs_block_rsv_release(fs_info, rsv, -1);
 		ret = btrfs_block_rsv_migrate(&fs_info->trans_block_rsv,
-					      rsv, min_size, 0);
+					      rsv, min_size, false);
 		BUG_ON(ret);	/* shouldn't happen */
 		trans->block_rsv = rsv;
 	}
