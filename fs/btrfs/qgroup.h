@@ -243,6 +243,7 @@ int btrfs_qgroup_trace_subtree(struct btrfs_trans_handle *trans,
  * new tree blocks whose generation is equal to (or larger than) @last_snapshot.
  */
 int btrfs_qgroup_trace_subtree_swap(struct btrfs_trans_handle *trans,
+				struct btrfs_block_group_cache *bg_cache,
 				struct extent_buffer *src_parent, int src_slot,
 				struct extent_buffer *dst_parent, int dst_slot,
 				u64 last_snapshot);
