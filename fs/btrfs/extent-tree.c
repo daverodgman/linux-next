@@ -2040,9 +2040,10 @@ int btrfs_inc_extent_ref(struct btrfs_trans_handle *trans,
 			   owner, offset, BTRFS_ADD_DELAYED_REF);
 
 	if (owner < BTRFS_FIRST_FREE_OBJECTID) {
-		ret = btrfs_add_delayed_tree_ref(trans, bytenr,
+		ret = btrfs_add_delayed_tree_ref(trans, root, bytenr,
 						 num_bytes, parent,
-						 root_objectid, (int)owner,
+						 root_objectid,
+						 (int)owner,
 						 BTRFS_ADD_DELAYED_REF, NULL,
 						 &old_ref_mod, &new_ref_mod);
 	} else {
@@ -6975,7 +6976,7 @@ void btrfs_free_tree_block(struct btrfs_trans_handle *trans,
 				   root->root_key.objectid,
 				   btrfs_header_level(buf), 0,
 				   BTRFS_DROP_DELAYED_REF);
-		ret = btrfs_add_delayed_tree_ref(trans, buf->start,
+		ret = btrfs_add_delayed_tree_ref(trans, root, buf->start,
 						 buf->len, parent,
 						 root->root_key.objectid,
 						 btrfs_header_level(buf),
@@ -7054,9 +7055,10 @@ int btrfs_free_extent(struct btrfs_trans_handle *trans,
 		old_ref_mod = new_ref_mod = 0;
 		ret = 0;
 	} else if (owner < BTRFS_FIRST_FREE_OBJECTID) {
-		ret = btrfs_add_delayed_tree_ref(trans, bytenr,
+		ret = btrfs_add_delayed_tree_ref(trans, root, bytenr,
 						 num_bytes, parent,
-						 root_objectid, (int)owner,
+						 root_objectid,
+						 (int)owner,
 						 BTRFS_DROP_DELAYED_REF, NULL,
 						 &old_ref_mod, &new_ref_mod);
 	} else {
@@ -8288,9 +8290,10 @@ struct extent_buffer *btrfs_alloc_tree_block(struct btrfs_trans_handle *trans,
 		btrfs_ref_tree_mod(root, ins.objectid, ins.offset, parent,
 				   root_objectid, level, 0,
 				   BTRFS_ADD_DELAYED_EXTENT);
-		ret = btrfs_add_delayed_tree_ref(trans, ins.objectid,
+		ret = btrfs_add_delayed_tree_ref(trans, root, ins.objectid,
 						 ins.offset, parent,
-						 root_objectid, level,
+						 root_objectid,
+						 level,
 						 BTRFS_ADD_DELAYED_EXTENT,
 						 extent_op, NULL, NULL);
 		if (ret)
@@ -8638,7 +8641,13 @@ skip:
 			parent = 0;
 		}
 
-		if (need_account) {
+		/*
+		 * Tree reloc tree doesn't contribute to qgroup numbers, and
+		 * we have already accounted them at merge time (replace_path),
+		 * thus we could skip expensive subtree trace here.
+		 */
+		if (root->root_key.objectid != BTRFS_TREE_RELOC_OBJECTID &&
+		    need_account) {
 			ret = btrfs_qgroup_trace_subtree(trans, next,
 							 generation, level - 1);
 			if (ret) {
