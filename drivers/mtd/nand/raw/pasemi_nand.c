@@ -43,10 +43,8 @@ static unsigned int lpcctl;
 static struct mtd_info *pasemi_nand_mtd;
 static const char driver_name[] = "pasemi-nand";
 
-static void pasemi_read_buf(struct mtd_info *mtd, u_char *buf, int len)
+static void pasemi_read_buf(struct nand_chip *chip, u_char *buf, int len)
 {
-	struct nand_chip *chip = mtd_to_nand(mtd);
-
 	while (len > 0x800) {
 		memcpy_fromio(buf, chip->IO_ADDR_R, 0x800);
 		buf += 0x800;
@@ -55,10 +53,9 @@ static void pasemi_read_buf(struct mtd_info *mtd, u_char *buf, int len)
 	memcpy_fromio(buf, chip->IO_ADDR_R, len);
 }
 
-static void pasemi_write_buf(struct mtd_info *mtd, const u_char *buf, int len)
+static void pasemi_write_buf(struct nand_chip *chip, const u_char *buf,
+			     int len)
 {
-	struct nand_chip *chip = mtd_to_nand(mtd);
-
 	while (len > 0x800) {
 		memcpy_toio(chip->IO_ADDR_R, buf, 0x800);
 		buf += 0x800;
@@ -67,11 +64,9 @@ static void pasemi_write_buf(struct mtd_info *mtd, const u_char *buf, int len)
 	memcpy_toio(chip->IO_ADDR_R, buf, len);
 }
 
-static void pasemi_hwcontrol(struct mtd_info *mtd, int cmd,
+static void pasemi_hwcontrol(struct nand_chip *chip, int cmd,
 			     unsigned int ctrl)
 {
-	struct nand_chip *chip = mtd_to_nand(mtd);
-
 	if (cmd == NAND_CMD_NONE)
 		return;
 
@@ -85,7 +80,7 @@ static void pasemi_hwcontrol(struct mtd_info *mtd, int cmd,
 	inl(lpcctl);
 }
 
-int pasemi_device_ready(struct mtd_info *mtd)
+int pasemi_device_ready(struct nand_chip *chip)
 {
 	return !!(inl(lpcctl) & LBICTRL_LPCCTL_NR);
 }
@@ -156,7 +151,7 @@ static int pasemi_nand_probe(struct platform_device *ofdev)
 	chip->bbt_options = NAND_BBT_USE_FLASH;
 
 	/* Scan to find existence of the device */
-	err = nand_scan(pasemi_nand_mtd, 1);
+	err = nand_scan(chip, 1);
 	if (err)
 		goto out_lpc;
 
@@ -191,7 +186,7 @@ static int pasemi_nand_remove(struct platform_device *ofdev)
 	chip = mtd_to_nand(pasemi_nand_mtd);
 
 	/* Release resources, unregister device */
-	nand_release(pasemi_nand_mtd);
+	nand_release(chip);
 
 	release_region(lpcctl, 4);
 

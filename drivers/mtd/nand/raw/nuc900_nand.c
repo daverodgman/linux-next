@@ -79,31 +79,31 @@ static const struct mtd_partition partitions[] = {
 	}
 };
 
-static unsigned char nuc900_nand_read_byte(struct mtd_info *mtd)
+static unsigned char nuc900_nand_read_byte(struct nand_chip *chip)
 {
 	unsigned char ret;
-	struct nuc900_nand *nand = mtd_to_nuc900(mtd);
+	struct nuc900_nand *nand = mtd_to_nuc900(nand_to_mtd(chip));
 
 	ret = (unsigned char)read_data_reg(nand);
 
 	return ret;
 }
 
-static void nuc900_nand_read_buf(struct mtd_info *mtd,
+static void nuc900_nand_read_buf(struct nand_chip *chip,
 				 unsigned char *buf, int len)
 {
 	int i;
-	struct nuc900_nand *nand = mtd_to_nuc900(mtd);
+	struct nuc900_nand *nand = mtd_to_nuc900(nand_to_mtd(chip));
 
 	for (i = 0; i < len; i++)
 		buf[i] = (unsigned char)read_data_reg(nand);
 }
 
-static void nuc900_nand_write_buf(struct mtd_info *mtd,
+static void nuc900_nand_write_buf(struct nand_chip *chip,
 				  const unsigned char *buf, int len)
 {
 	int i;
-	struct nuc900_nand *nand = mtd_to_nuc900(mtd);
+	struct nuc900_nand *nand = mtd_to_nuc900(nand_to_mtd(chip));
 
 	for (i = 0; i < len; i++)
 		write_data_reg(nand, buf[i]);
@@ -120,19 +120,20 @@ static int nuc900_check_rb(struct nuc900_nand *nand)
 	return val;
 }
 
-static int nuc900_nand_devready(struct mtd_info *mtd)
+static int nuc900_nand_devready(struct nand_chip *chip)
 {
-	struct nuc900_nand *nand = mtd_to_nuc900(mtd);
+	struct nuc900_nand *nand = mtd_to_nuc900(nand_to_mtd(chip));
 	int ready;
 
 	ready = (nuc900_check_rb(nand)) ? 1 : 0;
 	return ready;
 }
 
-static void nuc900_nand_command_lp(struct mtd_info *mtd, unsigned int command,
+static void nuc900_nand_command_lp(struct nand_chip *chip,
+				   unsigned int command,
 				   int column, int page_addr)
 {
-	register struct nand_chip *chip = mtd_to_nand(mtd);
+	struct mtd_info *mtd = nand_to_mtd(chip);
 	struct nuc900_nand *nand = mtd_to_nuc900(mtd);
 
 	if (command == NAND_CMD_READOOB) {
@@ -205,7 +206,7 @@ static void nuc900_nand_command_lp(struct mtd_info *mtd, unsigned int command,
 	 * any case on any machine. */
 	ndelay(100);
 
-	while (!chip->dev_ready(mtd))
+	while (!chip->dev_ready(chip))
 		;
 }
 
@@ -270,7 +271,7 @@ static int nuc900_nand_probe(struct platform_device *pdev)
 
 	nuc900_nand_enable(nuc900_nand);
 
-	if (nand_scan(mtd, 1))
+	if (nand_scan(chip, 1))
 		return -ENXIO;
 
 	mtd_device_register(mtd, partitions, ARRAY_SIZE(partitions));
@@ -284,7 +285,7 @@ static int nuc900_nand_remove(struct platform_device *pdev)
 {
 	struct nuc900_nand *nuc900_nand = platform_get_drvdata(pdev);
 
-	nand_release(nand_to_mtd(&nuc900_nand->chip));
+	nand_release(&nuc900_nand->chip);
 	clk_disable(nuc900_nand->clk);
 
 	return 0;

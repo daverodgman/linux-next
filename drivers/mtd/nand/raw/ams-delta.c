@@ -63,9 +63,8 @@ static const struct mtd_partition partition_info[] = {
 	  .size		=  3 * SZ_256K },
 };
 
-static void ams_delta_write_byte(struct mtd_info *mtd, u_char byte)
+static void ams_delta_write_byte(struct nand_chip *this, u_char byte)
 {
-	struct nand_chip *this = mtd_to_nand(mtd);
 	void __iomem *io_base = (void __iomem *)nand_get_controller_data(this);
 
 	writew(0, io_base + OMAP_MPUIO_IO_CNTL);
@@ -75,10 +74,9 @@ static void ams_delta_write_byte(struct mtd_info *mtd, u_char byte)
 	gpio_set_value(AMS_DELTA_GPIO_PIN_NAND_NWE, 1);
 }
 
-static u_char ams_delta_read_byte(struct mtd_info *mtd)
+static u_char ams_delta_read_byte(struct nand_chip *this)
 {
 	u_char res;
-	struct nand_chip *this = mtd_to_nand(mtd);
 	void __iomem *io_base = (void __iomem *)nand_get_controller_data(this);
 
 	gpio_set_value(AMS_DELTA_GPIO_PIN_NAND_NRE, 0);
@@ -90,21 +88,21 @@ static u_char ams_delta_read_byte(struct mtd_info *mtd)
 	return res;
 }
 
-static void ams_delta_write_buf(struct mtd_info *mtd, const u_char *buf,
+static void ams_delta_write_buf(struct nand_chip *this, const u_char *buf,
 				int len)
 {
 	int i;
 
 	for (i=0; i<len; i++)
-		ams_delta_write_byte(mtd, buf[i]);
+		ams_delta_write_byte(this, buf[i]);
 }
 
-static void ams_delta_read_buf(struct mtd_info *mtd, u_char *buf, int len)
+static void ams_delta_read_buf(struct nand_chip *this, u_char *buf, int len)
 {
 	int i;
 
 	for (i=0; i<len; i++)
-		buf[i] = ams_delta_read_byte(mtd);
+		buf[i] = ams_delta_read_byte(this);
 }
 
 /*
@@ -115,7 +113,7 @@ static void ams_delta_read_buf(struct mtd_info *mtd, u_char *buf, int len)
  * NAND_CLE: bit 1 -> bit 7
  * NAND_ALE: bit 2 -> bit 6
  */
-static void ams_delta_hwcontrol(struct mtd_info *mtd, int cmd,
+static void ams_delta_hwcontrol(struct nand_chip *this, int cmd,
 				unsigned int ctrl)
 {
 
@@ -129,10 +127,10 @@ static void ams_delta_hwcontrol(struct mtd_info *mtd, int cmd,
 	}
 
 	if (cmd != NAND_CMD_NONE)
-		ams_delta_write_byte(mtd, cmd);
+		ams_delta_write_byte(this, cmd);
 }
 
-static int ams_delta_nand_ready(struct mtd_info *mtd)
+static int ams_delta_nand_ready(struct nand_chip *this)
 {
 	return gpio_get_value(AMS_DELTA_GPIO_PIN_NAND_RB);
 }
@@ -235,7 +233,7 @@ static int ams_delta_init(struct platform_device *pdev)
 		goto out_gpio;
 
 	/* Scan to find existence of the device */
-	err = nand_scan(ams_delta_mtd, 1);
+	err = nand_scan(this, 1);
 	if (err)
 		goto out_mtd;
 
@@ -264,7 +262,7 @@ static int ams_delta_cleanup(struct platform_device *pdev)
 	void __iomem *io_base = platform_get_drvdata(pdev);
 
 	/* Release resources, unregister device */
-	nand_release(ams_delta_mtd);
+	nand_release(mtd_to_nand(ams_delta_mtd));
 
 	gpio_free_array(_mandatory_gpio, ARRAY_SIZE(_mandatory_gpio));
 	gpio_free(AMS_DELTA_GPIO_PIN_NAND_RB);

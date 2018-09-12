@@ -99,8 +99,9 @@ static const struct mtd_ooblayout_ops oob_sm_small_ops = {
 	.free = oob_sm_small_ooblayout_free,
 };
 
-static int sm_block_markbad(struct mtd_info *mtd, loff_t ofs)
+static int sm_block_markbad(struct nand_chip *chip, loff_t ofs)
 {
+	struct mtd_info *mtd = nand_to_mtd(chip);
 	struct mtd_oob_ops ops;
 	struct sm_oob oob;
 	int ret;
@@ -195,7 +196,7 @@ int sm_register_device(struct mtd_info *mtd, int smartmedia)
 	/* Scan for card properties */
 	chip->dummy_controller.ops = &sm_controller_ops;
 	flash_ids = smartmedia ? nand_smartmedia_flash_ids : nand_xd_flash_ids;
-	ret = nand_scan_with_ids(mtd, 1, flash_ids);
+	ret = nand_scan_with_ids(chip, 1, flash_ids);
 	if (ret)
 		return ret;
 
