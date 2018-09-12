@@ -1,0 +1,26 @@
+next/soc
+	patch
+		ARM: u300: Delete dummy SPI chip
+
+next/dt
+	socfgpa/updates
+		git://git.kernel.org/pub/scm/linux/kernel/git/dinguyen/linux tags/socfpga_updates_for_v4.20_part1
+
+next/drivers
+	drivers/tee
+		git://git.linaro.org/people/jens.wiklander/linux-tee tags/tee-drv-for-4.20
+
+next/defconfig
+
+next/late
+
+fixes
+	patch
+		firmware: arm_scmi: fix divide by zero when sustained_perf_level is zero
+	<no branch> (d07f05fb86439c41dd6967c94be3ba3837b21567)
+		https://github.com/Broadcom/stblinux tags/arm-soc/for-4.19/drivers-fixes
+	patch
+		memory: ti-aemif: fix a potential NULL-pointer dereference
+	<no branch> (d177c8b61d6b4ef360b1c2682e4d8e3bae01738b)
+		https://git.kernel.org/pub/scm/linux/kernel/git/sunxi/linux tags/sunxi-fixes-for-4.19
+
