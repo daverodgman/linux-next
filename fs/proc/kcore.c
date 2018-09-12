@@ -451,7 +451,8 @@ read_kcore(struct file *file, char __user *buffer, size_t buflen, loff_t *fpos)
 		 * If this is the first iteration or the address is not within
 		 * the previous entry, search for a matching entry.
 		 */
-		if (!m || start < m->addr || start >= m->addr + m->size) {
+		if (!m || &m->list == &kclist_head || start < m->addr ||
+		    start >= m->addr + m->size) {
 			list_for_each_entry(m, &kclist_head, list) {
 				if (start >= m->addr &&
 				    start < m->addr + m->size)
