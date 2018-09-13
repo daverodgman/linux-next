@@ -49,26 +49,23 @@ static const struct mtd_partition partition_info[] = {
 };
 #define NUM_PARTITIONS (ARRAY_SIZE(partition_info))
 
-static u_char cmx270_read_byte(struct mtd_info *mtd)
+static u_char cmx270_read_byte(struct nand_chip *this)
 {
-	struct nand_chip *this = mtd_to_nand(mtd);
-
 	return (readl(this->IO_ADDR_R) >> 16);
 }
 
-static void cmx270_write_buf(struct mtd_info *mtd, const u_char *buf, int len)
+static void cmx270_write_buf(struct nand_chip *this, const u_char *buf,
+			     int len)
 {
 	int i;
-	struct nand_chip *this = mtd_to_nand(mtd);
 
 	for (i=0; i<len; i++)
 		writel((*buf++ << 16), this->IO_ADDR_W);
 }
 
-static void cmx270_read_buf(struct mtd_info *mtd, u_char *buf, int len)
+static void cmx270_read_buf(struct nand_chip *this, u_char *buf, int len)
 {
 	int i;
-	struct nand_chip *this = mtd_to_nand(mtd);
 
 	for (i=0; i<len; i++)
 		*buf++ = readl(this->IO_ADDR_R) >> 16;
@@ -89,10 +86,9 @@ static void nand_cs_off(void)
 /*
  *	hardware specific access to control-lines
  */
-static void cmx270_hwcontrol(struct mtd_info *mtd, int dat,
+static void cmx270_hwcontrol(struct nand_chip *this, int dat,
 			     unsigned int ctrl)
 {
-	struct nand_chip *this = mtd_to_nand(mtd);
 	unsigned int nandaddr = (unsigned int)this->IO_ADDR_W;
 
 	dsb();
@@ -123,7 +119,7 @@ static void cmx270_hwcontrol(struct mtd_info *mtd, int dat,
 /*
  *	read device ready pin
  */
-static int cmx270_device_ready(struct mtd_info *mtd)
+static int cmx270_device_ready(struct nand_chip *this)
 {
 	dsb();
 
@@ -193,7 +189,7 @@ static int __init cmx270_init(void)
 	this->write_buf = cmx270_write_buf;
 
 	/* Scan to find existence of the device */
-	ret = nand_scan(cmx270_nand_mtd, 1);
+	ret = nand_scan(this, 1);
 	if (ret) {
 		pr_notice("No NAND device\n");
 		goto err_scan;
@@ -228,7 +224,7 @@ module_init(cmx270_init);
 static void __exit cmx270_cleanup(void)
 {
 	/* Release resources, unregister device */
-	nand_release(cmx270_nand_mtd);
+	nand_release(mtd_to_nand(cmx270_nand_mtd));
 
 	gpio_free(GPIO_NAND_RB);
 	gpio_free(GPIO_NAND_CS);
