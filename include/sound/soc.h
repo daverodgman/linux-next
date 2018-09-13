@@ -915,6 +915,8 @@ struct snd_soc_dai_link {
 	 */
 	const char *platform_name;
 	struct device_node *platform_of_node;
+	struct snd_soc_dai_link_component *platform;
+
 	int id;	/* optional ID for machine driver link identification */
 
 	const struct snd_soc_pcm_stream *params;
@@ -976,6 +978,10 @@ struct snd_soc_dai_link {
 	struct list_head list; /* DAI link list of the soc card */
 	struct snd_soc_dobj dobj; /* For topology */
 };
+#define for_each_link_codecs(link, i, codec)				\
+	for ((i) = 0;							\
+	     ((i) < link->num_codecs) && ((codec) = &link->codecs[i]);	\
+	     (i)++)
 
 struct snd_soc_codec_conf {
 	/*
@@ -1054,7 +1060,6 @@ struct snd_soc_card {
 	struct snd_soc_dai_link *dai_link;  /* predefined links only */
 	int num_links;  /* predefined links only */
 	struct list_head dai_link_list; /* all links */
-	int num_dai_links;
 
 	struct list_head rtd_list;
 	int num_rtd;
@@ -1124,6 +1129,8 @@ struct snd_soc_pcm_runtime {
 	enum snd_soc_pcm_subclass pcm_subclass;
 	struct snd_pcm_ops ops;
 
+	unsigned int params_select; /* currently selected param for dai link */
+
 	/* Dynamic PCM BE runtime data */
 	struct snd_soc_dpcm_runtime dpcm[2];
 	int fe_compr;
@@ -1152,6 +1159,13 @@ struct snd_soc_pcm_runtime {
 	unsigned int dev_registered:1;
 	unsigned int pop_wait:1;
 };
+#define for_each_rtd_codec_dai(rtd, i, dai)\
+	for ((i) = 0;						       \
+	     ((i) < rtd->num_codecs) && ((dai) = rtd->codec_dais[i]); \
+	     (i)++)
+#define for_each_rtd_codec_dai_reverse(rtd, i, dai)				\
+	for (; ((i--) >= 0) && ((dai) = rtd->codec_dais[i]);)
+
 
 /* mixer control */
 struct soc_mixer_control {
