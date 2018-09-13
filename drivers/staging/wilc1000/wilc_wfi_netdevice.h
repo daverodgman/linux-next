@@ -94,12 +94,40 @@ struct wilc_priv {
 	/* mutexes */
 	struct mutex scan_req_lock;
 	bool p2p_listen_state;
-
+	struct timer_list aging_timer;
+	struct network_info scanned_shadow[MAX_NUM_SCANNED_NETWORKS_SHADOW];
+	int scanned_cnt;
 };
 
 struct frame_reg {
 	u16 type;
 	bool reg;
+};
+
+#define MAX_TCP_SESSION                25
+#define MAX_PENDING_ACKS               256
+
+struct ack_session_info {
+	u32 seq_num;
+	u32 bigger_ack_num;
+	u16 src_port;
+	u16 dst_port;
+	u16 status;
+};
+
+struct pending_acks {
+	u32 ack_num;
+	u32 session_index;
+	struct txq_entry_t  *txqe;
+};
+
+struct tcp_ack_filter {
+	struct ack_session_info ack_session_info[2 * MAX_TCP_SESSION];
+	struct pending_acks pending_acks[MAX_PENDING_ACKS];
+	u32 pending_base;
+	u32 tcp_session;
+	u32 pending_acks_idx;
+	bool enabled;
 };
 
 struct wilc_vif {
@@ -116,6 +144,12 @@ struct wilc_vif {
 	struct net_device *ndev;
 	u8 mode;
 	u8 ifc_id;
+	struct timer_list during_ip_timer;
+	bool obtaining_ip;
+	struct timer_list periodic_rssi;
+	struct rf_info periodic_stat;
+	struct tcp_ack_filter ack_filter;
+	bool connecting;
 };
 
 struct wilc {
@@ -165,7 +199,10 @@ struct wilc {
 	struct device *dev;
 	bool suspend_event;
 
-	struct rf_info dummy_statistics;
+	bool enable_ps;
+	int clients_count;
+	struct workqueue_struct *hif_workqueue;
+	enum chip_ps_states chip_ps_state;
 };
 
 struct wilc_wfi_mon_priv {
