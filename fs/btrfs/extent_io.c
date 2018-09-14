@@ -1424,20 +1424,15 @@ int find_first_extent_bit(struct extent_io_tree *tree, u64 start,
 			  struct extent_state **cached_state)
 {
 	struct extent_state *state;
-	struct rb_node *n;
 	int ret = 1;
 
 	spin_lock(&tree->lock);
 	if (cached_state && *cached_state) {
 		state = *cached_state;
 		if (state->end == start - 1 && extent_state_in_tree(state)) {
-			n = rb_next(&state->rb_node);
-			while (n) {
-				state = rb_entry(n, struct extent_state,
-						 rb_node);
+			while ((state = next_state(state)) != NULL) {
 				if (state->state & bits)
 					goto got_it;
-				n = rb_next(n);
 			}
 			free_extent_state(*cached_state);
 			*cached_state = NULL;
@@ -5165,11 +5160,11 @@ void clear_extent_buffer_dirty(struct extent_buffer *eb)
 	WARN_ON(atomic_read(&eb->refs) == 0);
 }
 
-int set_extent_buffer_dirty(struct extent_buffer *eb)
+bool set_extent_buffer_dirty(struct extent_buffer *eb)
 {
 	int i;
 	int num_pages;
-	int was_dirty = 0;
+	bool was_dirty;
 
 	check_buffer_tree_ref(eb);
 
@@ -5179,8 +5174,15 @@ int set_extent_buffer_dirty(struct extent_buffer *eb)
 	WARN_ON(atomic_read(&eb->refs) == 0);
 	WARN_ON(!test_bit(EXTENT_BUFFER_TREE_REF, &eb->bflags));
 
+	if (!was_dirty)
+		for (i = 0; i < num_pages; i++)
+			set_page_dirty(eb->pages[i]);
+
+#ifdef CONFIG_BTRFS_DEBUG
 	for (i = 0; i < num_pages; i++)
-		set_page_dirty(eb->pages[i]);
+		ASSERT(PageDirty(eb->pages[i]));
+#endif
+
 	return was_dirty;
 }
 
