@@ -1712,6 +1712,349 @@ static int adjust_slots_upwards(struct btrfs_path *path, int root_level)
 	return 0;
 }
 
+/*
+ * helper function to trace a subtree tree block swap.
+ *
+ * The swapped tree block is marked by @dst_path->nodes[level].
+ * Thus @dst_path should have been populated already.
+ *
+ * While for src tree block, we only need the root eb as @src_eb.
+ * The needed path and search will done by this function.
+ */
+static int qgroup_trace_extent_swap(struct btrfs_trans_handle* trans,
+				    struct extent_buffer *src_eb,
+				    struct btrfs_path *dst_path,
+				    int dst_level, int root_level,
+				    bool trace_leaf)
+{
+	struct btrfs_key key;
+	struct btrfs_path *src_path;
+	struct btrfs_fs_info *fs_info = trans->fs_info;
+	u32 nodesize = fs_info->nodesize;
+	int cur_level = root_level;
+	int ret;
+
+	BUG_ON(dst_level > root_level);
+	/* Level mismatch */
+	if (btrfs_header_level(src_eb) != root_level)
+		return -EINVAL;
+
+	src_path = btrfs_alloc_path();
+	if (!src_path) {
+		ret = -ENOMEM;
+		goto out;
+	}
+
+	if (dst_level)
+		btrfs_node_key_to_cpu(dst_path->nodes[dst_level], &key, 0);
+	else
+		btrfs_item_key_to_cpu(dst_path->nodes[dst_level], &key, 0);
+
+	/* For src_path */
+	extent_buffer_get(src_eb);
+	src_path->nodes[root_level] = src_eb;
+	src_path->slots[root_level] = dst_path->slots[root_level];
+	src_path->locks[root_level] = 0;
+
+	/* A simplified version of btrfs_search_slot() */
+	while (cur_level >= dst_level) {
+		struct btrfs_key src_key;
+		struct btrfs_key dst_key;
+
+		if (src_path->nodes[cur_level] == NULL) {
+			struct btrfs_key first_key;
+			struct extent_buffer *eb;
+			int parent_slot;
+			u64 child_gen;
+			u64 child_bytenr;
+
+			eb = src_path->nodes[cur_level + 1];
+			parent_slot = src_path->slots[cur_level + 1];
+			child_bytenr = btrfs_node_blockptr(eb, parent_slot);
+			child_gen = btrfs_node_ptr_generation(eb, parent_slot);
+			btrfs_node_key_to_cpu(eb, &first_key, parent_slot);
+
+			eb = read_tree_block(fs_info, child_bytenr, child_gen,
+					     cur_level, &first_key);
+			if (IS_ERR(eb)) {
+				ret = PTR_ERR(eb);
+				goto out;
+			} else if (!extent_buffer_uptodate(eb)) {
+				free_extent_buffer(eb);
+				ret = -EIO;
+				goto out;
+			}
+
+			src_path->nodes[cur_level] = eb;
+
+			btrfs_tree_read_lock(eb);
+			btrfs_set_lock_blocking_rw(eb, BTRFS_READ_LOCK);
+			src_path->locks[cur_level] = BTRFS_READ_LOCK_BLOCKING;
+		}
+
+		src_path->slots[cur_level] = dst_path->slots[cur_level];
+		if (cur_level) {
+			btrfs_node_key_to_cpu(dst_path->nodes[cur_level], &dst_key,
+					      dst_path->slots[cur_level]);
+			btrfs_node_key_to_cpu(src_path->nodes[cur_level], &src_key,
+					      src_path->slots[cur_level]);
+		} else {
+			btrfs_item_key_to_cpu(dst_path->nodes[cur_level], &dst_key,
+					      dst_path->slots[cur_level]);
+			btrfs_item_key_to_cpu(src_path->nodes[cur_level], &src_key,
+					      src_path->slots[cur_level]);
+		}
+		/* Content mismatch, something went wrong */
+		if (btrfs_comp_cpu_keys(&dst_key, &src_key)) {
+			ret = -ENOENT;
+			goto out;
+		}
+		cur_level--;
+	}
+
+	/*
+	 * Now both @dst_path and @src_path have been populated, record the tree
+	 * blocks for qgroup accounting.
+	 */
+	ret = btrfs_qgroup_trace_extent(trans,
+			src_path->nodes[dst_level]->start,
+			nodesize, GFP_NOFS);
+	if (ret < 0)
+		goto out;
+	ret = btrfs_qgroup_trace_extent(trans,
+			dst_path->nodes[dst_level]->start,
+			nodesize, GFP_NOFS);
+	if (ret < 0)
+		goto out;
+
+	/* Record leaf file extents */
+	if (dst_level == 0 && trace_leaf) {
+		ret = btrfs_qgroup_trace_leaf_items(trans, src_path->nodes[0]);
+		if (ret < 0)
+			goto out;
+		ret = btrfs_qgroup_trace_leaf_items(trans, dst_path->nodes[0]);
+	}
+out:
+	btrfs_free_path(src_path);
+	return ret;
+}
+
+/*
+ * Helper function to do recursive generation aware depth-first search, to
+ * locate all new tree blocks in a subtree of tree reloc tree.
+ *
+ * E.g. (OO = Old tree blocks, NN = New tree blocks, whose gen == last_snapshot)
+ *       Tree reloc tree
+ * L2         NN (a)
+ *          /    \
+ * L1    OO        NN (b)
+ *      /  \      /  \
+ * L0  OO  OO    OO  NN
+ *               (c) (d)
+ * If we pass:
+ * @dst_path = [ nodes[1] = NN(b), nodes[0] = NULL ],
+ * @cur_level = 1
+ * @root_level = 1
+ *
+ * We will iterate through tree blocks NN(b), NN(d) and info qgroup to trace
+ * above tree blocks along with their counter parts in file tree.
+ * While during search, old tree blocsk OO(c) will be skiped as tree block swap
+ * won't affect OO(c).
+ */
+static int qgroup_trace_new_subtree_blocks(struct btrfs_trans_handle* trans,
+					   struct extent_buffer *src_eb,
+					   struct btrfs_path *dst_path,
+					   int cur_level, int root_level,
+					   u64 last_snapshot, bool trace_leaf)
+{
+	struct btrfs_fs_info *fs_info = trans->fs_info;
+	struct extent_buffer *eb;
+	bool need_cleanup = false;
+	int ret = 0;
+	int i;
+
+	/* Read the tree block if needed */
+	if (dst_path->nodes[cur_level] == NULL) {
+		struct btrfs_key first_key;
+		int parent_slot;
+		u64 child_gen;
+		u64 child_bytenr;
+
+		/*
+		 * We need to get child blockptr/gen from parent before
+		 * we can read it.
+		  */
+		eb = dst_path->nodes[cur_level + 1];
+		parent_slot = dst_path->slots[cur_level + 1];
+		child_bytenr = btrfs_node_blockptr(eb, parent_slot);
+		child_gen = btrfs_node_ptr_generation(eb, parent_slot);
+		btrfs_node_key_to_cpu(eb, &first_key, parent_slot);
+
+		/* This node is old, no need to trace */
+		if (child_gen < last_snapshot)
+			goto out;
+
+		eb = read_tree_block(fs_info, child_bytenr, child_gen,
+				     cur_level, &first_key);
+		if (IS_ERR(eb)) {
+			ret = PTR_ERR(eb);
+			goto out;
+		} else if (!extent_buffer_uptodate(eb)) {
+			free_extent_buffer(eb);
+			ret = -EIO;
+			goto out;
+		}
+
+		dst_path->nodes[cur_level] = eb;
+		dst_path->slots[cur_level] = 0;
+
+		btrfs_tree_read_lock(eb);
+		btrfs_set_lock_blocking_rw(eb, BTRFS_READ_LOCK);
+		dst_path->locks[cur_level] = BTRFS_READ_LOCK_BLOCKING;
+		need_cleanup = true;
+	}
+
+	/* Now record this tree block and its counter part for qgroups */
+	ret = qgroup_trace_extent_swap(trans, src_eb, dst_path, cur_level,
+				       root_level, trace_leaf);
+	if (ret < 0)
+		goto cleanup;
+
+	eb = dst_path->nodes[cur_level];
+
+	if (cur_level > 0) {
+		/* Iterate all children tree blocks */
+		for (i = 0; i < btrfs_header_nritems(eb); i++) {
+			/* Skip old tree blocks as they won't be swapped */
+			if (btrfs_node_ptr_generation(eb, i) < last_snapshot)
+				continue;
+			dst_path->slots[cur_level] = i;
+
+			/* Recursive call (at most 7 times) */
+			ret = qgroup_trace_new_subtree_blocks(trans, src_eb,
+					dst_path, cur_level - 1, root_level,
+					last_snapshot, trace_leaf);
+			if (ret < 0)
+				goto cleanup;
+		}
+	}
+
+cleanup:
+	if (need_cleanup) {
+		/* Clean up */
+		btrfs_tree_unlock_rw(dst_path->nodes[cur_level],
+				     dst_path->locks[cur_level]);
+		free_extent_buffer(dst_path->nodes[cur_level]);
+		dst_path->nodes[cur_level] = NULL;
+		dst_path->slots[cur_level] = 0;
+		dst_path->locks[cur_level] = 0;
+	}
+out:
+	return ret;
+}
+
+/*
+ * For balance subtree swap.
+ *
+ * Will go down the tree block pointed by @dst_eb (pointed by @dst_parent and
+ * @dst_slot), and find any tree blocks whose generation is at @last_snapshot,
+ * and then go down @src_eb (pointed by @src_parent and @src_slot) to find
+ * the conterpart of the tree block, then mark both tree blocks as qgroup dirty,
+ * and skip all tree blocks whose generation is smaller than last_snapshot.
+ *
+ * This would skip tons of tree blocks of original btrfs_qgroup_trace_subtree(),
+ * which is the culprit of super slow balance if the file tree is large.
+ *
+ * @src_parent, @src_slot: pointer to src (file tree) eb.
+ * @dst_parent, @dst_slot: pointer to dst (tree reloc tree) eb.
+ */
+int btrfs_qgroup_trace_subtree_swap(struct btrfs_trans_handle *trans,
+				struct btrfs_block_group_cache *bg_cache,
+				struct extent_buffer *src_parent, int src_slot,
+				struct extent_buffer *dst_parent, int dst_slot,
+				u64 last_snapshot)
+{
+	struct btrfs_fs_info *fs_info = trans->fs_info;
+	struct btrfs_path *dst_path = NULL;
+	struct btrfs_key first_key;
+	struct extent_buffer *src_eb = NULL;
+	struct extent_buffer *dst_eb = NULL;
+	bool trace_leaf = false;
+	u64 child_gen;
+	u64 child_bytenr;
+	int level;
+	int ret;
+
+	if (!test_bit(BTRFS_FS_QUOTA_ENABLED, &fs_info->flags))
+		return 0;
+
+	/* Wrong parameter order */
+	BUG_ON(btrfs_node_ptr_generation(src_parent, src_slot) >
+		btrfs_node_ptr_generation(dst_parent, dst_slot));
+
+	/*
+	 * Only trace leaf if we're relocating data block groups, this could
+	 * reduce tons of data extents tracing for meta/sys bg relocation.
+	 */
+	if (bg_cache->flags & BTRFS_BLOCK_GROUP_DATA)
+		trace_leaf = true;
+	/* Read out real @src_eb, pointed by @src_parent and @src_slot */
+	child_bytenr = btrfs_node_blockptr(src_parent, src_slot);
+	child_gen = btrfs_node_ptr_generation(src_parent, src_slot);
+	btrfs_node_key_to_cpu(src_parent, &first_key, src_slot);
+
+	src_eb = read_tree_block(fs_info, child_bytenr, child_gen,
+			btrfs_header_level(src_parent) - 1, &first_key);
+	if (IS_ERR(src_eb)) {
+		ret = PTR_ERR(src_eb);
+		goto out;
+	}
+
+	/* Read out real @dst_eb, pointed by @src_parent and @src_slot */
+	child_bytenr = btrfs_node_blockptr(dst_parent, dst_slot);
+	child_gen = btrfs_node_ptr_generation(dst_parent, dst_slot);
+	btrfs_node_key_to_cpu(dst_parent, &first_key, dst_slot);
+
+	dst_eb = read_tree_block(fs_info, child_bytenr, child_gen,
+			btrfs_header_level(dst_parent) - 1, &first_key);
+	if (IS_ERR(dst_eb)) {
+		ret = PTR_ERR(dst_eb);
+		goto out;
+	}
+
+	if (!extent_buffer_uptodate(src_eb) || !extent_buffer_uptodate(dst_eb)) {
+		ret = -EINVAL;
+		goto out;
+	}
+
+	level = btrfs_header_level(dst_eb);
+	dst_path = btrfs_alloc_path();
+	if (!dst_path) {
+		ret = -ENOMEM;
+		goto out;
+	}
+	/* For dst_path */
+	extent_buffer_get(dst_eb);
+	dst_path->nodes[level] = dst_eb;
+	dst_path->slots[level] = 0;
+	dst_path->locks[level] = 0;
+
+	/* Do the generation aware breadth-first search */
+	ret = qgroup_trace_new_subtree_blocks(trans, src_eb, dst_path, level,
+					      level, last_snapshot, trace_leaf);
+	if (ret < 0)
+		goto out;
+	ret = 0;
+
+out:
+	free_extent_buffer(src_eb);
+	free_extent_buffer(dst_eb);
+	btrfs_free_path(dst_path);
+	if (ret < 0)
+		fs_info->qgroup_flags |= BTRFS_QGROUP_STATUS_FLAG_INCONSISTENT;
+	return ret;
+}
+
 int btrfs_qgroup_trace_subtree(struct btrfs_trans_handle *trans,
 			       struct extent_buffer *root_eb,
 			       u64 root_gen, int root_level)
@@ -2132,6 +2475,7 @@ int btrfs_qgroup_account_extents(struct btrfs_trans_handle *trans)
 	struct btrfs_delayed_ref_root *delayed_refs;
 	struct ulist *new_roots = NULL;
 	struct rb_node *node;
+	u64 num_dirty_extents = 0;
 	u64 qgroup_to_skip;
 	int ret = 0;
 
@@ -2141,6 +2485,7 @@ int btrfs_qgroup_account_extents(struct btrfs_trans_handle *trans)
 		record = rb_entry(node, struct btrfs_qgroup_extent_record,
 				  node);
 
+		num_dirty_extents++;
 		trace_btrfs_qgroup_account_extents(fs_info, record);
 
 		if (!ret) {
@@ -2186,6 +2531,8 @@ cleanup:
 		kfree(record);
 
 	}
+	trace_qgroup_num_dirty_extents(fs_info, trans->transid,
+				       num_dirty_extents);
 	return ret;
 }
 
