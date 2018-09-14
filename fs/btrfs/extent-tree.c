@@ -2503,100 +2503,67 @@ static int cleanup_ref_head(struct btrfs_trans_handle *trans,
 	return 0;
 }
 
-/*
- * Returns 0 on success or if called with an already aborted transaction.
- * Returns -ENOMEM or -EIO on failure and will abort the transaction.
- */
-static noinline int __btrfs_run_delayed_refs(struct btrfs_trans_handle *trans,
-					     unsigned long nr)
+static
+struct btrfs_delayed_ref_head *btrfs_obtain_ref_head(
+					struct btrfs_trans_handle *trans)
+{
+	struct btrfs_delayed_ref_root *delayed_refs =
+		&trans->transaction->delayed_refs;
+	struct btrfs_delayed_ref_head *head = NULL;
+	int ret;
+
+	spin_lock(&delayed_refs->lock);
+	head = btrfs_select_ref_head(trans);
+	if (!head) {
+		spin_unlock(&delayed_refs->lock);
+		return head;
+	}
+
+	/*
+	 * grab the lock that says we are going to process  all the refs for
+	 * this head
+	 */
+	ret = btrfs_delayed_ref_lock(trans, head);
+	spin_unlock(&delayed_refs->lock);
+	/*
+	 * we may have dropped the spin lock to get the head
+	 * mutex lock, and that might have given someone else
+	 * time to free the head.  If that's true, it has been
+	 * removed from our list and we can move on.
+	 */
+	if (ret == -EAGAIN)
+		head = ERR_PTR(-EAGAIN);
+
+	return head;
+}
+
+static
+int btrfs_run_delayed_refs_for_head(struct btrfs_trans_handle *trans,
+				    struct btrfs_delayed_ref_head *locked_ref,
+				    unsigned long *run_refs)
 {
 	struct btrfs_fs_info *fs_info = trans->fs_info;
 	struct btrfs_delayed_ref_root *delayed_refs;
-	struct btrfs_delayed_ref_node *ref;
-	struct btrfs_delayed_ref_head *locked_ref = NULL;
 	struct btrfs_delayed_extent_op *extent_op;
-	ktime_t start = ktime_get();
-	int ret;
-	unsigned long count = 0;
-	unsigned long actual_count = 0;
+	struct btrfs_delayed_ref_node *ref;
 	int must_insert_reserved = 0;
+	int ret;
 
 	delayed_refs = &trans->transaction->delayed_refs;
-	while (1) {
-		if (!locked_ref) {
-			if (count >= nr)
-				break;
 
-			spin_lock(&delayed_refs->lock);
-			locked_ref = btrfs_select_ref_head(trans);
-			if (!locked_ref) {
-				spin_unlock(&delayed_refs->lock);
-				break;
-			}
+	lockdep_assert_held(&locked_ref->mutex);
+	lockdep_assert_held(&locked_ref->lock);
 
-			/* grab the lock that says we are going to process
-			 * all the refs for this head */
-			ret = btrfs_delayed_ref_lock(trans, locked_ref);
-			spin_unlock(&delayed_refs->lock);
-			/*
-			 * we may have dropped the spin lock to get the head
-			 * mutex lock, and that might have given someone else
-			 * time to free the head.  If that's true, it has been
-			 * removed from our list and we can move on.
-			 */
-			if (ret == -EAGAIN) {
-				locked_ref = NULL;
-				count++;
-				continue;
-			}
-		}
+	while ((ref = select_delayed_ref(locked_ref))) {
 
-		/*
-		 * We need to try and merge add/drops of the same ref since we
-		 * can run into issues with relocate dropping the implicit ref
-		 * and then it being added back again before the drop can
-		 * finish.  If we merged anything we need to re-loop so we can
-		 * get a good ref.
-		 * Or we can get node references of the same type that weren't
-		 * merged when created due to bumps in the tree mod seq, and
-		 * we need to merge them to prevent adding an inline extent
-		 * backref before dropping it (triggering a BUG_ON at
-		 * insert_inline_extent_backref()).
-		 */
-		spin_lock(&locked_ref->lock);
-		btrfs_merge_delayed_refs(trans, delayed_refs, locked_ref);
-
-		ref = select_delayed_ref(locked_ref);
-
-		if (ref && ref->seq &&
+		if (ref->seq &&
 		    btrfs_check_delayed_seq(fs_info, ref->seq)) {
 			spin_unlock(&locked_ref->lock);
 			unselect_delayed_ref_head(delayed_refs, locked_ref);
-			locked_ref = NULL;
-			cond_resched();
-			count++;
-			continue;
+			return -EAGAIN;
 		}
 
-		/*
-		 * We're done processing refs in this ref_head, clean everything
-		 * up and move on to the next ref_head.
-		 */
-		if (!ref) {
-			ret = cleanup_ref_head(trans, locked_ref);
-			if (ret > 0 ) {
-				/* We dropped our lock, we need to loop. */
-				ret = 0;
-				continue;
-			} else if (ret) {
-				return ret;
-			}
-			locked_ref = NULL;
-			count++;
-			continue;
-		}
-
-		actual_count++;
+		(*run_refs)++;
 		ref->in_tree = 0;
 		rb_erase_cached(&ref->ref_node, &locked_ref->ref_tree);
 		RB_CLEAR_NODE(&ref->ref_node);
@@ -2620,8 +2587,8 @@ static noinline int __btrfs_run_delayed_refs(struct btrfs_trans_handle *trans,
 		atomic_dec(&delayed_refs->num_entries);
 
 		/*
-		 * Record the must-insert_reserved flag before we drop the spin
-		 * lock.
+		 * Record the must-insert_reserved flag before we drop the
+		 * spin lock.
 		 */
 		must_insert_reserved = locked_ref->must_insert_reserved;
 		locked_ref->must_insert_reserved = 0;
@@ -2643,9 +2610,88 @@ static noinline int __btrfs_run_delayed_refs(struct btrfs_trans_handle *trans,
 		}
 
 		btrfs_put_delayed_ref(ref);
-		count++;
 		cond_resched();
+
+		spin_lock(&locked_ref->lock);
+		btrfs_merge_delayed_refs(trans, delayed_refs, locked_ref);
 	}
+
+	return 0;
+}
+
+/*
+ * Returns 0 on success or if called with an already aborted transaction.
+ * Returns -ENOMEM or -EIO on failure and will abort the transaction.
+ */
+static noinline int __btrfs_run_delayed_refs(struct btrfs_trans_handle *trans,
+					     unsigned long nr)
+{
+	struct btrfs_fs_info *fs_info = trans->fs_info;
+	struct btrfs_delayed_ref_root *delayed_refs;
+	struct btrfs_delayed_ref_head *locked_ref = NULL;
+	ktime_t start = ktime_get();
+	int ret;
+	unsigned long count = 0;
+	unsigned long actual_count = 0;
+
+	delayed_refs = &trans->transaction->delayed_refs;
+	do {
+		if (!locked_ref) {
+			locked_ref = btrfs_obtain_ref_head(trans);
+			if (IS_ERR_OR_NULL(locked_ref)) {
+				if (PTR_ERR(locked_ref) == -EAGAIN) {
+					continue;
+				} else
+					break;
+			}
+			count++;
+		}
+		/*
+		 * We need to try and merge add/drops of the same ref since we
+		 * can run into issues with relocate dropping the implicit ref
+		 * and then it being added back again before the drop can
+		 * finish.  If we merged anything we need to re-loop so we can
+		 * get a good ref.
+		 * Or we can get node references of the same type that weren't
+		 * merged when created due to bumps in the tree mod seq, and
+		 * we need to merge them to prevent adding an inline extent
+		 * backref before dropping it (triggering a BUG_ON at
+		 * insert_inline_extent_backref()).
+		 */
+		spin_lock(&locked_ref->lock);
+		btrfs_merge_delayed_refs(trans, delayed_refs, locked_ref);
+
+		ret = btrfs_run_delayed_refs_for_head(trans, locked_ref,
+						      &actual_count);
+		if (ret < 0 && ret != -EAGAIN) {
+			/*
+			 * Error, btrfs_run_delayed_refs_for_head already
+			 * unlocked everything so just bail out
+			 */
+			return ret;
+		} else if (!ret) {
+			/*
+			 * Success, perform the usual cleanup of a processed
+			 * head
+			 */
+			ret = cleanup_ref_head(trans, locked_ref);
+			if (ret > 0 ) {
+				/* We dropped our lock, we need to loop. */
+				ret = 0;
+				continue;
+			} else if (ret) {
+				return ret;
+			}
+		}
+
+		/*
+		 * Either success case or btrfs_run_delayed_refs_for_head
+		 * returned -EAGAIN, meaning we need to select another head
+		 */
+
+		locked_ref = NULL;
+		cond_resched();
+	} while ((nr != -1 && count < nr) || locked_ref);
 
 	/*
 	 * We don't want to include ref heads since we can have empty ref heads
