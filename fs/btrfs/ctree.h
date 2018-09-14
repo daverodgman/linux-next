@@ -360,12 +360,12 @@ struct btrfs_dev_replace {
 	struct btrfs_device *tgtdev;
 
 	struct mutex lock_finishing_cancel_unmount;
-	rwlock_t lock;
-	atomic_t read_locks;
-	atomic_t blocking_readers;
-	wait_queue_head_t read_lock_wq;
+	struct rw_semaphore rwsem;
 
 	struct btrfs_scrub_progress scrub_progress;
+
+	struct percpu_counter bio_counter;
+	wait_queue_head_t replace_wait;
 };
 
 /* For raid type sysfs entries */
@@ -1087,9 +1087,6 @@ struct btrfs_fs_info {
 
 	/* device replace state */
 	struct btrfs_dev_replace dev_replace;
-
-	struct percpu_counter bio_counter;
-	wait_queue_head_t replace_wait;
 
 	struct semaphore uuid_tree_rescan_sem;
 
