@@ -884,7 +884,8 @@ again:
 		    cur->bytenr) {
 			btrfs_err(root->fs_info,
 	"couldn't find block (%llu) (level %d) in tree (%llu) with key (%llu %u %llu)",
-				  cur->bytenr, level - 1, root->objectid,
+				  cur->bytenr, level - 1,
+				  root->root_key.objectid,
 				  node_key->objectid, node_key->type,
 				  node_key->offset);
 			err = -ENOENT;
@@ -1281,7 +1282,7 @@ static void __del_reloc_root(struct btrfs_root *root)
 	struct mapping_node *node = NULL;
 	struct reloc_control *rc = fs_info->reloc_ctl;
 
-	if (rc) {
+	if (rc && root->node) {
 		spin_lock(&rc->reloc_root_tree.lock);
 		rb_node = tree_search(&rc->reloc_root_tree.rb_root,
 				      root->node->start);
@@ -1735,7 +1736,7 @@ int memcmp_node_keys(struct extent_buffer *eb, int slot,
  * errors, a negative error number is returned.
  */
 static noinline_for_stack
-int replace_path(struct btrfs_trans_handle *trans,
+int replace_path(struct btrfs_trans_handle *trans, struct reloc_control *rc,
 		 struct btrfs_root *dest, struct btrfs_root *src,
 		 struct btrfs_path *path, struct btrfs_key *next_key,
 		 int lowest_level, int max_level)
@@ -1879,14 +1880,9 @@ again:
 		 *    and tree block numbers, if current trans doesn't free
 		 *    data reloc tree inode.
 		 */
-		ret = btrfs_qgroup_trace_subtree(trans, parent,
-				btrfs_header_generation(parent),
-				btrfs_header_level(parent));
-		if (ret < 0)
-			break;
-		ret = btrfs_qgroup_trace_subtree(trans, path->nodes[level],
-				btrfs_header_generation(path->nodes[level]),
-				btrfs_header_level(path->nodes[level]));
+		ret = btrfs_qgroup_trace_subtree_swap(trans, rc->block_group,
+				parent, slot, path->nodes[level],
+				path->slots[level], last_snapshot);
 		if (ret < 0)
 			break;
 
@@ -2205,7 +2201,7 @@ static noinline_for_stack int merge_reloc_root(struct reloc_control *rc,
 		    btrfs_comp_cpu_keys(&next_key, &key) >= 0) {
 			ret = 0;
 		} else {
-			ret = replace_path(trans, root, reloc_root, path,
+			ret = replace_path(trans, rc, root, reloc_root, path,
 					   &next_key, level, max_level);
 		}
 		if (ret < 0) {
@@ -4669,7 +4665,7 @@ int btrfs_reloc_post_snapshot(struct btrfs_trans_handle *trans,
 	if (rc->merge_reloc_tree) {
 		ret = btrfs_block_rsv_migrate(&pending->block_rsv,
 					      rc->block_rsv,
-					      rc->nodes_relocated, 1);
+					      rc->nodes_relocated, true);
 		if (ret)
 			return ret;
 	}
