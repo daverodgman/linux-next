@@ -2375,7 +2375,7 @@ select_delayed_ref(struct btrfs_delayed_ref_head *head)
 {
 	struct btrfs_delayed_ref_node *ref;
 
-	if (RB_EMPTY_ROOT(&head->ref_tree))
+	if (RB_EMPTY_ROOT(&head->ref_tree.rb_root))
 		return NULL;
 
 	/*
@@ -2388,7 +2388,7 @@ select_delayed_ref(struct btrfs_delayed_ref_head *head)
 		return list_first_entry(&head->ref_add_list,
 				struct btrfs_delayed_ref_node, add_list);
 
-	ref = rb_entry(rb_first(&head->ref_tree),
+	ref = rb_entry(rb_first_cached(&head->ref_tree),
 		       struct btrfs_delayed_ref_node, ref_node);
 	ASSERT(list_empty(&ref->add_list));
 	return ref;
@@ -2449,13 +2449,13 @@ static int cleanup_ref_head(struct btrfs_trans_handle *trans,
 	spin_unlock(&head->lock);
 	spin_lock(&delayed_refs->lock);
 	spin_lock(&head->lock);
-	if (!RB_EMPTY_ROOT(&head->ref_tree) || head->extent_op) {
+	if (!RB_EMPTY_ROOT(&head->ref_tree.rb_root) || head->extent_op) {
 		spin_unlock(&head->lock);
 		spin_unlock(&delayed_refs->lock);
 		return 1;
 	}
 	delayed_refs->num_heads--;
-	rb_erase(&head->href_node, &delayed_refs->href_root);
+	rb_erase_cached(&head->href_node, &delayed_refs->href_root);
 	RB_CLEAR_NODE(&head->href_node);
 	spin_unlock(&head->lock);
 	spin_unlock(&delayed_refs->lock);
@@ -2598,7 +2598,7 @@ static noinline int __btrfs_run_delayed_refs(struct btrfs_trans_handle *trans,
 
 		actual_count++;
 		ref->in_tree = 0;
-		rb_erase(&ref->ref_node, &locked_ref->ref_tree);
+		rb_erase_cached(&ref->ref_node, &locked_ref->ref_tree);
 		RB_CLEAR_NODE(&ref->ref_node);
 		if (!list_empty(&ref->add_list))
 			list_del(&ref->add_list);
@@ -2941,7 +2941,7 @@ again:
 			btrfs_create_pending_block_groups(trans);
 
 		spin_lock(&delayed_refs->lock);
-		node = rb_first(&delayed_refs->href_root);
+		node = rb_first_cached(&delayed_refs->href_root);
 		if (!node) {
 			spin_unlock(&delayed_refs->lock);
 			goto out;
@@ -3041,7 +3041,8 @@ static noinline int check_delayed_ref(struct btrfs_root *root,
 	 * XXX: We should replace this with a proper search function in the
 	 * future.
 	 */
-	for (node = rb_first(&head->ref_tree); node; node = rb_next(node)) {
+	for (node = rb_first_cached(&head->ref_tree); node;
+	     node = rb_next(node)) {
 		ref = rb_entry(node, struct btrfs_delayed_ref_node, ref_node);
 		/* If it's a shared ref we know a cross reference exists */
 		if (ref->type != BTRFS_EXTENT_DATA_REF_KEY) {
@@ -6909,7 +6910,7 @@ static noinline int check_ref_cleanup(struct btrfs_trans_handle *trans,
 		goto out_delayed_unlock;
 
 	spin_lock(&head->lock);
-	if (!RB_EMPTY_ROOT(&head->ref_tree))
+	if (!RB_EMPTY_ROOT(&head->ref_tree.rb_root))
 		goto out;
 
 	if (head->extent_op) {
@@ -6930,7 +6931,7 @@ static noinline int check_ref_cleanup(struct btrfs_trans_handle *trans,
 	 * at this point we have a head with no other entries.  Go
 	 * ahead and process it.
 	 */
-	rb_erase(&head->href_node, &delayed_refs->href_root);
+	rb_erase_cached(&head->href_node, &delayed_refs->href_root);
 	RB_CLEAR_NODE(&head->href_node);
 	atomic_dec(&delayed_refs->num_entries);
 
