@@ -804,7 +804,7 @@ isl1208_probe(struct i2c_client *client, const struct i2c_device_id *id)
 		evdet_irq = of_irq_get_byname(np, "evdet");
 	}
 
-	rc = sysfs_create_group(&client->dev.kobj, &isl1208_rtc_sysfs_files);
+	rc = rtc_add_group(rtc, &isl1208_rtc_sysfs_files);
 	if (rc)
 		return rc;
 
@@ -819,14 +819,6 @@ isl1208_probe(struct i2c_client *client, const struct i2c_device_id *id)
 		return rc;
 
 	return rtc_register_device(rtc);
-}
-
-static int
-isl1208_remove(struct i2c_client *client)
-{
-	sysfs_remove_group(&client->dev.kobj, &isl1208_rtc_sysfs_files);
-
-	return 0;
 }
 
 static const struct i2c_device_id isl1208_id[] = {
@@ -851,7 +843,6 @@ static struct i2c_driver isl1208_driver = {
 		.of_match_table = of_match_ptr(isl1208_of_match),
 	},
 	.probe = isl1208_probe,
-	.remove = isl1208_remove,
 	.id_table = isl1208_id,
 };
 
