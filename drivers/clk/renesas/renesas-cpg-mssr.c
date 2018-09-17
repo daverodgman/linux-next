@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: GPL-2.0
 /*
  * Renesas Clock Pulse Generator / Module Standby and Software Reset
  *
@@ -7,10 +8,6 @@
  *
  * Copyright (C) 2013 Ideas On Board SPRL
  * Copyright (C) 2015 Renesas Electronics Corp.
- *
- * This program is free software; you can redistribute it and/or modify
- * it under the terms of the GNU General Public License as published by
- * the Free Software Foundation; version 2 of the License.
  */
 
 #include <linux/clk.h>
@@ -311,6 +308,11 @@ static void __init cpg_mssr_register_core_clk(const struct cpg_core_clk *core,
 							parent_name, 0,
 							core->mult, div);
 		}
+		break;
+
+	case CLK_TYPE_FR:
+		clk = clk_register_fixed_rate(NULL, core->name, NULL, 0,
+					      core->mult);
 		break;
 
 	default:
@@ -657,6 +659,12 @@ static const struct of_device_id cpg_mssr_match[] = {
 	{
 		.compatible = "renesas,r8a77470-cpg-mssr",
 		.data = &r8a77470_cpg_mssr_info,
+	},
+#endif
+#ifdef CONFIG_CLK_R8A774A1
+	{
+		.compatible = "renesas,r8a774a1-cpg-mssr",
+		.data = &r8a774a1_cpg_mssr_info,
 	},
 #endif
 #ifdef CONFIG_CLK_R8A7790
