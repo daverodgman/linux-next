@@ -262,7 +262,7 @@ extern struct arm64_ftr_reg arm64_ftr_reg_ctrel0;
 /*
  * CPU feature detected at boot time based on system-wide value of a
  * feature. It is safe for a late CPU to have this feature even though
- * the system hasn't enabled it, although the featuer will not be used
+ * the system hasn't enabled it, although the feature will not be used
  * by Linux in this case. If the system has enabled this feature already,
  * then every late CPU must have it.
  */
@@ -506,6 +506,12 @@ static inline bool system_supports_sve(void)
 {
 	return IS_ENABLED(CONFIG_ARM64_SVE) &&
 		cpus_have_const_cap(ARM64_SVE);
+}
+
+static inline bool system_supports_cnp(void)
+{
+	return IS_ENABLED(CONFIG_ARM64_CNP) &&
+		cpus_have_const_cap(ARM64_HAS_CNP);
 }
 
 #define ARM64_SSBD_UNKNOWN		-1
