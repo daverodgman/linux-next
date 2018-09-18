@@ -85,9 +85,8 @@ static void xway_writeb(struct mtd_info *mtd, int op, u8 value)
 	writeb(value, data->nandaddr + op);
 }
 
-static void xway_select_chip(struct mtd_info *mtd, int select)
+static void xway_select_chip(struct nand_chip *chip, int select)
 {
-	struct nand_chip *chip = mtd_to_nand(mtd);
 	struct xway_nand_data *data = nand_get_controller_data(chip);
 
 	switch (select) {
@@ -106,8 +105,10 @@ static void xway_select_chip(struct mtd_info *mtd, int select)
 	}
 }
 
-static void xway_cmd_ctrl(struct mtd_info *mtd, int cmd, unsigned int ctrl)
+static void xway_cmd_ctrl(struct nand_chip *chip, int cmd, unsigned int ctrl)
 {
+	struct mtd_info *mtd = nand_to_mtd(chip);
+
 	if (cmd == NAND_CMD_NONE)
 		return;
 
@@ -120,30 +121,30 @@ static void xway_cmd_ctrl(struct mtd_info *mtd, int cmd, unsigned int ctrl)
 		;
 }
 
-static int xway_dev_ready(struct mtd_info *mtd)
+static int xway_dev_ready(struct nand_chip *chip)
 {
 	return ltq_ebu_r32(EBU_NAND_WAIT) & NAND_WAIT_RD;
 }
 
-static unsigned char xway_read_byte(struct mtd_info *mtd)
+static unsigned char xway_read_byte(struct nand_chip *chip)
 {
-	return xway_readb(mtd, NAND_READ_DATA);
+	return xway_readb(nand_to_mtd(chip), NAND_READ_DATA);
 }
 
-static void xway_read_buf(struct mtd_info *mtd, u_char *buf, int len)
+static void xway_read_buf(struct nand_chip *chip, u_char *buf, int len)
 {
 	int i;
 
 	for (i = 0; i < len; i++)
-		buf[i] = xway_readb(mtd, NAND_WRITE_DATA);
+		buf[i] = xway_readb(nand_to_mtd(chip), NAND_WRITE_DATA);
 }
 
-static void xway_write_buf(struct mtd_info *mtd, const u_char *buf, int len)
+static void xway_write_buf(struct nand_chip *chip, const u_char *buf, int len)
 {
 	int i;
 
 	for (i = 0; i < len; i++)
-		xway_writeb(mtd, NAND_WRITE_DATA, buf[i]);
+		xway_writeb(nand_to_mtd(chip), NAND_WRITE_DATA, buf[i]);
 }
 
 /*
@@ -205,13 +206,13 @@ static int xway_nand_probe(struct platform_device *pdev)
 		    | cs_flag, EBU_NAND_CON);
 
 	/* Scan to find existence of the device */
-	err = nand_scan(mtd, 1);
+	err = nand_scan(&data->chip, 1);
 	if (err)
 		return err;
 
 	err = mtd_device_register(mtd, NULL, 0);
 	if (err)
-		nand_release(mtd);
+		nand_release(&data->chip);
 
 	return err;
 }
@@ -223,7 +224,7 @@ static int xway_nand_remove(struct platform_device *pdev)
 {
 	struct xway_nand_data *data = platform_get_drvdata(pdev);
 
-	nand_release(nand_to_mtd(&data->chip));
+	nand_release(&data->chip);
 
 	return 0;
 }
