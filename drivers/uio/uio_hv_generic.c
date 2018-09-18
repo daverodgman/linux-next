@@ -17,7 +17,6 @@
  * # echo -n "ed963694-e847-4b2a-85af-bc9cfc11d6f3" \
  *    > /sys/bus/vmbus/drivers/uio_hv_generic/bind
  */
-#define DEBUG 1
 #define pr_fmt(fmt) KBUILD_MODNAME ": " fmt
 
 #include <linux/device.h>
@@ -33,13 +32,13 @@
 
 #include "../hv/hyperv_vmbus.h"
 
-#define DRIVER_VERSION	"0.02.0"
+#define DRIVER_VERSION	"0.02.1"
 #define DRIVER_AUTHOR	"Stephen Hemminger <sthemmin at microsoft.com>"
 #define DRIVER_DESC	"Generic UIO driver for VMBus devices"
 
 #define HV_RING_SIZE	 512	/* pages */
-#define SEND_BUFFER_SIZE (15 * 1024 * 1024)
-#define RECV_BUFFER_SIZE (15 * 1024 * 1024)
+#define SEND_BUFFER_SIZE (16 * 1024 * 1024)
+#define RECV_BUFFER_SIZE (31 * 1024 * 1024)
 
 /*
  * List of resources to be mapped to user space
