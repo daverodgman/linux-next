@@ -664,7 +664,10 @@ static inline void arch_setup_dma_ops(struct device *dev, u64 dma_base,
 #endif
 
 #ifndef arch_teardown_dma_ops
-static inline void arch_teardown_dma_ops(struct device *dev) { }
+static inline void arch_teardown_dma_ops(struct device *dev)
+{
+	dev->dma_ops = NULL;
+}
 #endif
 
 static inline unsigned int dma_get_max_seg_size(struct device *dev)
@@ -752,18 +755,6 @@ dma_mark_declared_memory_occupied(struct device *dev,
 	return ERR_PTR(-EBUSY);
 }
 #endif /* CONFIG_HAVE_GENERIC_DMA_COHERENT */
-
-#ifdef CONFIG_HAS_DMA
-int dma_configure(struct device *dev);
-void dma_deconfigure(struct device *dev);
-#else
-static inline int dma_configure(struct device *dev)
-{
-	return 0;
-}
-
-static inline void dma_deconfigure(struct device *dev) {}
-#endif
 
 /*
  * Managed DMA API
