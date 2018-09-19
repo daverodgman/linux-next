@@ -1,11 +1,8 @@
+/* SPDX-License-Identifier: GPL-2.0 */
 /*
  * Renesas Clock Pulse Generator / Module Standby and Software Reset
  *
  * Copyright (C) 2015 Glider bvba
- *
- * This program is free software; you can redistribute it and/or modify
- * it under the terms of the GNU General Public License as published by
- * the Free Software Foundation; version 2 of the License.
  */
 
 #ifndef __CLK_RENESAS_CPG_MSSR_H__
@@ -38,6 +35,7 @@ enum clk_types {
 	CLK_TYPE_FF,		/* Fixed Factor Clock */
 	CLK_TYPE_DIV6P1,	/* DIV6 Clock with 1 parent clock */
 	CLK_TYPE_DIV6_RO,	/* DIV6 Clock read only with extra divisor */
+	CLK_TYPE_FR,		/* Fixed Rate Clock */
 
 	/* Custom definitions start here */
 	CLK_TYPE_CUSTOM,
@@ -56,6 +54,8 @@ enum clk_types {
 	DEF_BASE(_name, _id, CLK_TYPE_DIV6P1, _parent, .offset = _offset)
 #define DEF_DIV6_RO(_name, _id, _parent, _offset, _div)	\
 	DEF_BASE(_name, _id, CLK_TYPE_DIV6_RO, _parent, .offset = _offset, .div = _div, .mult = 1)
+#define DEF_RATE(_name, _id, _rate)	\
+	DEF_TYPE(_name, _id, CLK_TYPE_FR, .mult = _rate)
 
     /*
      * Definitions of Module Clocks
@@ -134,6 +134,7 @@ struct cpg_mssr_info {
 extern const struct cpg_mssr_info r8a7743_cpg_mssr_info;
 extern const struct cpg_mssr_info r8a7745_cpg_mssr_info;
 extern const struct cpg_mssr_info r8a77470_cpg_mssr_info;
+extern const struct cpg_mssr_info r8a774a1_cpg_mssr_info;
 extern const struct cpg_mssr_info r8a7790_cpg_mssr_info;
 extern const struct cpg_mssr_info r8a7791_cpg_mssr_info;
 extern const struct cpg_mssr_info r8a7792_cpg_mssr_info;
