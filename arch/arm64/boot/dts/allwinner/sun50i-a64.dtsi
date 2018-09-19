@@ -88,6 +88,7 @@
 			device_type = "cpu";
 			reg = <0>;
 			enable-method = "psci";
+			next-level-cache = <&L2>;
 		};
 
 		cpu1: cpu@1 {
@@ -95,6 +96,7 @@
 			device_type = "cpu";
 			reg = <1>;
 			enable-method = "psci";
+			next-level-cache = <&L2>;
 		};
 
 		cpu2: cpu@2 {
@@ -102,6 +104,7 @@
 			device_type = "cpu";
 			reg = <2>;
 			enable-method = "psci";
+			next-level-cache = <&L2>;
 		};
 
 		cpu3: cpu@3 {
@@ -109,6 +112,12 @@
 			device_type = "cpu";
 			reg = <3>;
 			enable-method = "psci";
+			next-level-cache = <&L2>;
+		};
+
+		L2: l2-cache {
+			compatible = "cache";
+			cache-level = <2>;
 		};
 	};
 
@@ -270,6 +279,11 @@
 			#size-cells = <0>;
 		};
 
+		sid: eeprom@1c14000 {
+			compatible = "allwinner,sun50i-a64-sid";
+			reg = <0x1c14000 0x400>;
+		};
+
 		usb_otg: usb@1c19000 {
 			compatible = "allwinner,sun8i-a33-musb";
 			reg = <0x01c19000 0x0400>;
@@ -399,9 +413,16 @@
 			};
 
 			mmc2_pins: mmc2-pins {
-				pins = "PC1", "PC5", "PC6", "PC8", "PC9",
+				pins = "PC5", "PC6", "PC8", "PC9",
 				       "PC10","PC11", "PC12", "PC13",
 				       "PC14", "PC15", "PC16";
+				function = "mmc2";
+				drive-strength = <30>;
+				bias-pull-up;
+			};
+
+			mmc2_ds_pin: mmc2-ds-pin {
+				pins = "PC1";
 				function = "mmc2";
 				drive-strength = <30>;
 				bias-pull-up;
@@ -442,7 +463,7 @@
 				function = "spi1";
 			};
 
-			uart0_pins_a: uart0 {
+			uart0_pb_pins: uart0-pb-pins {
 				pins = "PB8", "PB9";
 				function = "uart0";
 			};
@@ -749,7 +770,7 @@
 			interrupt-controller;
 			#interrupt-cells = <3>;
 
-			r_i2c_pins_a: i2c-a {
+			r_i2c_pl89_pins: r-i2c-pl89-pins {
 				pins = "PL8", "PL9";
 				function = "s_i2c";
 			};
