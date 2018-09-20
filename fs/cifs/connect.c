@@ -659,7 +659,15 @@ dequeue_mid(struct mid_q_entry *mid, bool malformed)
 		mid->mid_state = MID_RESPONSE_RECEIVED;
 	else
 		mid->mid_state = MID_RESPONSE_MALFORMED;
-	list_del_init(&mid->qhead);
+	/*
+	 * Trying to handle/dequeue a mid after the send_recv()
+	 * function has finished processing it is a bug.
+	 */
+	if (mid->mid_flags & MID_DELETED)
+		printk_once(KERN_WARNING
+			    "trying to dequeue a deleted mid\n");
+	else
+		list_del_init(&mid->qhead);
 	spin_unlock(&GlobalMid_Lock);
 }
 
@@ -2389,6 +2397,7 @@ cifs_get_tcp_session(struct smb_vol *volume_info)
 		volume_info->target_rfc1001_name, RFC1001_NAME_LEN_WITH_NULL);
 	tcp_ses->session_estab = false;
 	tcp_ses->sequence_number = 0;
+	tcp_ses->reconnect_instance = 0;
 	tcp_ses->lstrp = jiffies;
 	spin_lock_init(&tcp_ses->req_lock);
 	INIT_LIST_HEAD(&tcp_ses->tcp_ses_list);

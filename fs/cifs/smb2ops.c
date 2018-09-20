@@ -74,6 +74,12 @@ smb2_add_credits(struct TCP_Server_Info *server, const unsigned int add,
 	int *val, rc = 0;
 	spin_lock(&server->req_lock);
 	val = server->ops->get_credits_field(server, optype);
+
+	/* eg found case where write overlapping reconnect messed up credits */
+	if (((optype & CIFS_OP_MASK) == CIFS_NEG_OP) && (*val != 0))
+		trace_smb3_reconnect_with_invalid_credits(server->CurrentMid,
+			server->hostname, *val);
+
 	*val += add;
 	if (*val > 65000) {
 		*val = 65000; /* Don't get near 64K credits, avoid srv bugs */
@@ -104,6 +110,8 @@ smb2_set_credits(struct TCP_Server_Info *server, const int val)
 {
 	spin_lock(&server->req_lock);
 	server->credits = val;
+	if (val == 1)
+		server->reconnect_instance++;
 	spin_unlock(&server->req_lock);
 }
 
@@ -1301,7 +1309,7 @@ smb2_set_file_size(const unsigned int xid, struct cifs_tcon *tcon,
 	}
 
 	return SMB2_set_eof(xid, tcon, cfile->fid.persistent_fid,
-			    cfile->fid.volatile_fid, cfile->pid, &eof, false);
+			    cfile->fid.volatile_fid, cfile->pid, &eof);
 }
 
 static int
@@ -1556,7 +1564,7 @@ smb2_oplock_response(struct cifs_tcon *tcon, struct cifs_fid *fid,
 				 CIFS_CACHE_READ(cinode) ? 1 : 0);
 }
 
-static void
+void
 smb2_set_related(struct smb_rqst *rqst)
 {
 	struct smb2_sync_hdr *shdr;
@@ -1567,7 +1575,7 @@ smb2_set_related(struct smb_rqst *rqst)
 
 char smb2_padding[7] = {0, 0, 0, 0, 0, 0, 0};
 
-static void
+void
 smb2_set_next_command(struct TCP_Server_Info *server, struct smb_rqst *rqst)
 {
 	struct smb2_sync_hdr *shdr;
@@ -1610,7 +1618,7 @@ smb2_queryfs(const unsigned int xid, struct cifs_tcon *tcon,
 		flags |= CIFS_TRANSFORM_REQ;
 
 	memset(rqst, 0, sizeof(rqst));
-	memset(resp_buftype, 0, sizeof(resp_buftype));
+	resp_buftype[0] = resp_buftype[1] = resp_buftype[2] = CIFS_NO_BUFFER;
 	memset(rsp_iov, 0, sizeof(rsp_iov));
 
 	memset(&open_iov, 0, sizeof(open_iov));
