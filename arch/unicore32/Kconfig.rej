@@ -1,0 +1,10 @@
+--- arch/unicore32/Kconfig~mm-remove-config_have_memblock
++++ arch/unicore32/Kconfig
+@@ -4,7 +4,6 @@ config UNICORE32
+ 	select ARCH_HAS_DEVMEM_IS_ALLOWED
+ 	select ARCH_MIGHT_HAVE_PC_PARPORT
+ 	select ARCH_MIGHT_HAVE_PC_SERIO
+-	select HAVE_MEMBLOCK
+ 	select HAVE_GENERIC_DMA_COHERENT
+ 	select HAVE_KERNEL_GZIP
+ 	select HAVE_KERNEL_BZIP2
