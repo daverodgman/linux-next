@@ -1721,7 +1721,7 @@ static bool acpi_nvdimm_has_method(struct acpi_device *adev, char *method)
 	return false;
 }
 
-static void nfit_intel_shutdown_status(struct nfit_mem *nfit_mem)
+__weak void nfit_intel_shutdown_status(struct nfit_mem *nfit_mem)
 {
 	struct nd_intel_smart smart = { 0 };
 	union acpi_object in_buf = {
@@ -1782,10 +1782,6 @@ static int acpi_nfit_add_dimm(struct acpi_nfit_desc *acpi_desc,
 	int family = -1;
 	struct acpi_nfit_control_region *dcr = nfit_mem->dcr;
 
-	/* nfit test assumes 1:1 relationship between commands and dsms */
-	nfit_mem->dsm_mask = acpi_desc->dimm_cmd_force_en;
-	nfit_mem->family = NVDIMM_FAMILY_INTEL;
-
 	if (dcr->valid_fields & ACPI_NFIT_CONTROL_MFG_INFO_VALID)
 		sprintf(nfit_mem->id, "%04x-%02x-%04x-%08x",
 				be16_to_cpu(dcr->vendor_id),
@@ -1797,9 +1793,15 @@ static int acpi_nfit_add_dimm(struct acpi_nfit_desc *acpi_desc,
 				be16_to_cpu(dcr->vendor_id),
 				be32_to_cpu(dcr->serial_number));
 
+	/* nfit test assumes 1:1 relationship between commands and dsms */
+	nfit_mem->dsm_mask = acpi_desc->dimm_cmd_force_en;
+	nfit_mem->family = NVDIMM_FAMILY_INTEL;
 	adev = to_acpi_dev(acpi_desc);
-	if (!adev)
+	if (!adev) {
+		/* unit test case */
+		populate_shutdown_status(nfit_mem);
 		return 0;
+	}
 
 	adev_dimm = acpi_find_child_device(adev, device_handle, false);
 	nfit_mem->adev = adev_dimm;
