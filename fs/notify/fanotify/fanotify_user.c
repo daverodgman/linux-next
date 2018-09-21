@@ -132,7 +132,7 @@ static int fill_event_metadata(struct fsnotify_group *group,
 	metadata->vers = FANOTIFY_METADATA_VERSION;
 	metadata->reserved = 0;
 	metadata->mask = fsn_event->mask & FAN_ALL_OUTGOING_EVENTS;
-	metadata->pid = pid_vnr(event->tgid);
+	metadata->pid = pid_vnr(event->pid);
 	if (unlikely(fsn_event->mask & FAN_Q_OVERFLOW))
 		metadata->fd = FAN_NOFD;
 	else {
