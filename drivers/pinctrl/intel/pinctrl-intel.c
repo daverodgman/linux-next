@@ -7,11 +7,14 @@
  *          Mika Westerberg <mika.westerberg@linux.intel.com>
  */
 
+#include <linux/acpi.h>
 #include <linux/module.h>
 #include <linux/interrupt.h>
 #include <linux/gpio/driver.h>
 #include <linux/log2.h>
 #include <linux/platform_device.h>
+#include <linux/property.h>
+
 #include <linux/pinctrl/pinctrl.h>
 #include <linux/pinctrl/pinmux.h>
 #include <linux/pinctrl/pinconf.h>
@@ -747,86 +750,6 @@ static const struct pinctrl_desc intel_pinctrl_desc = {
 	.owner = THIS_MODULE,
 };
 
-static int intel_gpio_get(struct gpio_chip *chip, unsigned offset)
-{
-	struct intel_pinctrl *pctrl = gpiochip_get_data(chip);
-	void __iomem *reg;
-	u32 padcfg0;
-
-	reg = intel_get_padcfg(pctrl, offset, PADCFG0);
-	if (!reg)
-		return -EINVAL;
-
-	padcfg0 = readl(reg);
-	if (!(padcfg0 & PADCFG0_GPIOTXDIS))
-		return !!(padcfg0 & PADCFG0_GPIOTXSTATE);
-
-	return !!(padcfg0 & PADCFG0_GPIORXSTATE);
-}
-
-static void intel_gpio_set(struct gpio_chip *chip, unsigned offset, int value)
-{
-	struct intel_pinctrl *pctrl = gpiochip_get_data(chip);
-	unsigned long flags;
-	void __iomem *reg;
-	u32 padcfg0;
-
-	reg = intel_get_padcfg(pctrl, offset, PADCFG0);
-	if (!reg)
-		return;
-
-	raw_spin_lock_irqsave(&pctrl->lock, flags);
-	padcfg0 = readl(reg);
-	if (value)
-		padcfg0 |= PADCFG0_GPIOTXSTATE;
-	else
-		padcfg0 &= ~PADCFG0_GPIOTXSTATE;
-	writel(padcfg0, reg);
-	raw_spin_unlock_irqrestore(&pctrl->lock, flags);
-}
-
-static int intel_gpio_get_direction(struct gpio_chip *chip, unsigned int offset)
-{
-	struct intel_pinctrl *pctrl = gpiochip_get_data(chip);
-	void __iomem *reg;
-	u32 padcfg0;
-
-	reg = intel_get_padcfg(pctrl, offset, PADCFG0);
-	if (!reg)
-		return -EINVAL;
-
-	padcfg0 = readl(reg);
-
-	if (padcfg0 & PADCFG0_PMODE_MASK)
-		return -EINVAL;
-
-	return !!(padcfg0 & PADCFG0_GPIOTXDIS);
-}
-
-static int intel_gpio_direction_input(struct gpio_chip *chip, unsigned offset)
-{
-	return pinctrl_gpio_direction_input(chip->base + offset);
-}
-
-static int intel_gpio_direction_output(struct gpio_chip *chip, unsigned offset,
-				       int value)
-{
-	intel_gpio_set(chip, offset, value);
-	return pinctrl_gpio_direction_output(chip->base + offset);
-}
-
-static const struct gpio_chip intel_gpio_chip = {
-	.owner = THIS_MODULE,
-	.request = gpiochip_generic_request,
-	.free = gpiochip_generic_free,
-	.get_direction = intel_gpio_get_direction,
-	.direction_input = intel_gpio_direction_input,
-	.direction_output = intel_gpio_direction_output,
-	.get = intel_gpio_get,
-	.set = intel_gpio_set,
-	.set_config = gpiochip_generic_config,
-};
-
 /**
  * intel_gpio_to_pin() - Translate from GPIO offset to pin number
  * @pctrl: Pinctrl structure
@@ -871,6 +794,101 @@ static int intel_gpio_to_pin(struct intel_pinctrl *pctrl, unsigned offset,
 
 	return -EINVAL;
 }
+
+static int intel_gpio_get(struct gpio_chip *chip, unsigned offset)
+{
+	struct intel_pinctrl *pctrl = gpiochip_get_data(chip);
+	void __iomem *reg;
+	u32 padcfg0;
+	int pin;
+
+	pin = intel_gpio_to_pin(pctrl, offset, NULL, NULL);
+	if (pin < 0)
+		return -EINVAL;
+
+	reg = intel_get_padcfg(pctrl, pin, PADCFG0);
+	if (!reg)
+		return -EINVAL;
+
+	padcfg0 = readl(reg);
+	if (!(padcfg0 & PADCFG0_GPIOTXDIS))
+		return !!(padcfg0 & PADCFG0_GPIOTXSTATE);
+
+	return !!(padcfg0 & PADCFG0_GPIORXSTATE);
+}
+
+static void intel_gpio_set(struct gpio_chip *chip, unsigned offset, int value)
+{
+	struct intel_pinctrl *pctrl = gpiochip_get_data(chip);
+	unsigned long flags;
+	void __iomem *reg;
+	u32 padcfg0;
+	int pin;
+
+	pin = intel_gpio_to_pin(pctrl, offset, NULL, NULL);
+	if (pin < 0)
+		return;
+
+	reg = intel_get_padcfg(pctrl, pin, PADCFG0);
+	if (!reg)
+		return;
+
+	raw_spin_lock_irqsave(&pctrl->lock, flags);
+	padcfg0 = readl(reg);
+	if (value)
+		padcfg0 |= PADCFG0_GPIOTXSTATE;
+	else
+		padcfg0 &= ~PADCFG0_GPIOTXSTATE;
+	writel(padcfg0, reg);
+	raw_spin_unlock_irqrestore(&pctrl->lock, flags);
+}
+
+static int intel_gpio_get_direction(struct gpio_chip *chip, unsigned int offset)
+{
+	struct intel_pinctrl *pctrl = gpiochip_get_data(chip);
+	void __iomem *reg;
+	u32 padcfg0;
+	int pin;
+
+	pin = intel_gpio_to_pin(pctrl, offset, NULL, NULL);
+	if (pin < 0)
+		return -EINVAL;
+
+	reg = intel_get_padcfg(pctrl, pin, PADCFG0);
+	if (!reg)
+		return -EINVAL;
+
+	padcfg0 = readl(reg);
+
+	if (padcfg0 & PADCFG0_PMODE_MASK)
+		return -EINVAL;
+
+	return !!(padcfg0 & PADCFG0_GPIOTXDIS);
+}
+
+static int intel_gpio_direction_input(struct gpio_chip *chip, unsigned offset)
+{
+	return pinctrl_gpio_direction_input(chip->base + offset);
+}
+
+static int intel_gpio_direction_output(struct gpio_chip *chip, unsigned offset,
+				       int value)
+{
+	intel_gpio_set(chip, offset, value);
+	return pinctrl_gpio_direction_output(chip->base + offset);
+}
+
+static const struct gpio_chip intel_gpio_chip = {
+	.owner = THIS_MODULE,
+	.request = gpiochip_generic_request,
+	.free = gpiochip_generic_free,
+	.get_direction = intel_gpio_get_direction,
+	.direction_input = intel_gpio_direction_input,
+	.direction_output = intel_gpio_direction_output,
+	.get = intel_gpio_get,
+	.set = intel_gpio_set,
+	.set_config = gpiochip_generic_config,
+};
 
 static int intel_gpio_irq_reqres(struct irq_data *d)
 {
@@ -1414,6 +1432,50 @@ int intel_pinctrl_probe(struct platform_device *pdev,
 	return 0;
 }
 EXPORT_SYMBOL_GPL(intel_pinctrl_probe);
+
+int intel_pinctrl_probe_by_hid(struct platform_device *pdev)
+{
+	const struct intel_pinctrl_soc_data *data;
+
+	data = device_get_match_data(&pdev->dev);
+	return intel_pinctrl_probe(pdev, data);
+}
+EXPORT_SYMBOL_GPL(intel_pinctrl_probe_by_hid);
+
+int intel_pinctrl_probe_by_uid(struct platform_device *pdev)
+{
+	const struct intel_pinctrl_soc_data *data = NULL;
+	const struct intel_pinctrl_soc_data **table;
+	struct acpi_device *adev;
+	unsigned int i;
+
+	adev = ACPI_COMPANION(&pdev->dev);
+	if (adev) {
+		const void *match = device_get_match_data(&pdev->dev);
+
+		table = (const struct intel_pinctrl_soc_data **)match;
+		for (i = 0; table[i]; i++) {
+			if (!strcmp(adev->pnp.unique_id, table[i]->uid)) {
+				data = table[i];
+				break;
+			}
+		}
+	} else {
+		const struct platform_device_id *id;
+
+		id = platform_get_device_id(pdev);
+		if (!id)
+			return -ENODEV;
+
+		table = (const struct intel_pinctrl_soc_data **)id->driver_data;
+		data = table[pdev->id];
+	}
+	if (!data)
+		return -ENODEV;
+
+	return intel_pinctrl_probe(pdev, data);
+}
+EXPORT_SYMBOL_GPL(intel_pinctrl_probe_by_uid);
 
 #ifdef CONFIG_PM_SLEEP
 static bool intel_pinctrl_should_save(struct intel_pinctrl *pctrl, unsigned pin)
