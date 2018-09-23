@@ -310,10 +310,12 @@ static int call_undef_hook(struct pt_regs *regs)
 	int (*fn)(struct pt_regs *regs, u32 instr) = NULL;
 	void __user *pc = (void __user *)instruction_pointer(regs);
 
-	if (!user_mode(regs))
-		return 1;
-
-	if (compat_thumb_mode(regs)) {
+	if (!user_mode(regs)) {
+		__le32 instr_le;
+		if (probe_kernel_address((__force __le32 *)pc, instr_le))
+			goto exit;
+		instr = le32_to_cpu(instr_le);
+	} else if (compat_thumb_mode(regs)) {
 		/* 16-bit Thumb instruction */
 		__le16 instr_le;
 		if (get_user(instr_le, (__le16 __user *)pc))
@@ -351,6 +353,9 @@ void force_signal_inject(int signal, int code, unsigned long address)
 	siginfo_t info;
 	const char *desc;
 	struct pt_regs *regs = current_pt_regs();
+
+	if (WARN_ON(!user_mode(regs)))
+		return;
 
 	clear_siginfo(&info);
 
@@ -406,12 +411,8 @@ asmlinkage void __exception do_undefinstr(struct pt_regs *regs)
 	if (call_undef_hook(regs) == 0)
 		return;
 
+	BUG_ON(!user_mode(regs));
 	force_signal_inject(SIGILL, ILL_ILLOPC, regs->pc);
-}
-
-void cpu_enable_cache_maint_trap(const struct arm64_cpu_capabilities *__unused)
-{
-	sysreg_clear_set(sctlr_el1, SCTLR_EL1_UCI, 0);
 }
 
 #define __user_cache_maint(insn, address, res)			\
@@ -437,7 +438,7 @@ void cpu_enable_cache_maint_trap(const struct arm64_cpu_capabilities *__unused)
 static void user_cache_maint_handler(unsigned int esr, struct pt_regs *regs)
 {
 	unsigned long address;
-	int rt = (esr & ESR_ELx_SYS64_ISS_RT_MASK) >> ESR_ELx_SYS64_ISS_RT_SHIFT;
+	int rt = ESR_ELx_SYS64_ISS_RT(esr);
 	int crm = (esr & ESR_ELx_SYS64_ISS_CRM_MASK) >> ESR_ELx_SYS64_ISS_CRM_SHIFT;
 	int ret = 0;
 
@@ -472,7 +473,7 @@ static void user_cache_maint_handler(unsigned int esr, struct pt_regs *regs)
 
 static void ctr_read_handler(unsigned int esr, struct pt_regs *regs)
 {
-	int rt = (esr & ESR_ELx_SYS64_ISS_RT_MASK) >> ESR_ELx_SYS64_ISS_RT_SHIFT;
+	int rt = ESR_ELx_SYS64_ISS_RT(esr);
 	unsigned long val = arm64_ftr_reg_user_value(&arm64_ftr_reg_ctrel0);
 
 	pt_regs_write_reg(regs, rt, val);
@@ -482,7 +483,7 @@ static void ctr_read_handler(unsigned int esr, struct pt_regs *regs)
 
 static void cntvct_read_handler(unsigned int esr, struct pt_regs *regs)
 {
-	int rt = (esr & ESR_ELx_SYS64_ISS_RT_MASK) >> ESR_ELx_SYS64_ISS_RT_SHIFT;
+	int rt = ESR_ELx_SYS64_ISS_RT(esr);
 
 	pt_regs_write_reg(regs, rt, arch_counter_get_cntvct());
 	arm64_skip_faulting_instruction(regs, AARCH64_INSN_SIZE);
@@ -490,10 +491,21 @@ static void cntvct_read_handler(unsigned int esr, struct pt_regs *regs)
 
 static void cntfrq_read_handler(unsigned int esr, struct pt_regs *regs)
 {
-	int rt = (esr & ESR_ELx_SYS64_ISS_RT_MASK) >> ESR_ELx_SYS64_ISS_RT_SHIFT;
+	int rt = ESR_ELx_SYS64_ISS_RT(esr);
 
 	pt_regs_write_reg(regs, rt, arch_timer_get_rate());
 	arm64_skip_faulting_instruction(regs, AARCH64_INSN_SIZE);
+}
+
+static void mrs_handler(unsigned int esr, struct pt_regs *regs)
+{
+	u32 sysreg, rt;
+
+	rt = ESR_ELx_SYS64_ISS_RT(esr);
+	sysreg = esr_sys64_to_sysreg(esr);
+
+	if (do_emulate_mrs(regs, sysreg, rt) != 0)
+		force_signal_inject(SIGILL, ILL_ILLOPC, regs->pc);
 }
 
 struct sys64_hook {
@@ -525,6 +537,12 @@ static struct sys64_hook sys64_hooks[] = {
 		.esr_mask = ESR_ELx_SYS64_ISS_SYS_OP_MASK,
 		.esr_val = ESR_ELx_SYS64_ISS_SYS_CNTFRQ,
 		.handler = cntfrq_read_handler,
+	},
+	{
+		/* Trap read access to CPUID registers */
+		.esr_mask = ESR_ELx_SYS64_ISS_SYS_MRS_OP_MASK,
+		.esr_val = ESR_ELx_SYS64_ISS_SYS_MRS_OP_VAL,
+		.handler = mrs_handler,
 	},
 	{},
 };
@@ -605,7 +623,6 @@ asmlinkage void bad_mode(struct pt_regs *regs, int reason, unsigned int esr)
 		handler[reason], smp_processor_id(), esr,
 		esr_get_class_string(esr));
 
-	die("Oops - bad mode", regs, 0);
 	local_daif_mask();
 	panic("bad mode");
 }
