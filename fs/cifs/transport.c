@@ -113,9 +113,18 @@ DeleteMidQEntry(struct mid_q_entry *midEntry)
 		cifs_small_buf_release(midEntry->resp_buf);
 #ifdef CONFIG_CIFS_STATS2
 	now = jiffies;
-	/* commands taking longer than one second are indications that
-	   something is wrong, unless it is quite a slow link or server */
-	if (time_after(now, midEntry->when_alloc + HZ) &&
+	/*
+	 * commands taking longer than one second (default) can be indications
+	 * that something is wrong, unless it is quite a slow link or a very
+	 * busy server. Note that this calc is unlikely or impossible to wrap
+	 * as long as slow_rsp_threshold is not set way above recommended max
+	 * value (32767 ie 9 hours) and is generally harmless even if wrong
+	 * since only affects debug counters - so leaving the calc as simple
+	 * comparison rather than doing multiple conversions and overflow
+	 * checks
+	 */
+	if ((slow_rsp_threshold != 0) &&
+	    time_after(now, midEntry->when_alloc + (slow_rsp_threshold * HZ)) &&
 	    (midEntry->command != command)) {
 		/* smb2slowcmd[NUMBER_OF_SMB2_COMMANDS] counts by command */
 		if ((le16_to_cpu(midEntry->command) < NUMBER_OF_SMB2_COMMANDS) &&
@@ -142,7 +151,8 @@ void
 cifs_delete_mid(struct mid_q_entry *mid)
 {
 	spin_lock(&GlobalMid_Lock);
-	list_del(&mid->qhead);
+	list_del_init(&mid->qhead);
+	mid->mid_flags |= MID_DELETED;
 	spin_unlock(&GlobalMid_Lock);
 
 	DeleteMidQEntry(mid);
@@ -772,6 +782,11 @@ cifs_setup_request(struct cifs_ses *ses, struct smb_rqst *rqst)
 	return mid;
 }
 
+static void
+cifs_noop_callback(struct mid_q_entry *mid)
+{
+}
+
 int
 compound_send_recv(const unsigned int xid, struct cifs_ses *ses,
 		   const int flags, const int num_rqst, struct smb_rqst *rqst,
@@ -826,8 +841,13 @@ compound_send_recv(const unsigned int xid, struct cifs_ses *ses,
 		}
 
 		midQ[i]->mid_state = MID_REQUEST_SUBMITTED;
+		/*
+		 * We don't invoke the callback compounds unless it is the last
+		 * request.
+		 */
+		if (i < num_rqst - 1)
+			midQ[i]->callback = cifs_noop_callback;
 	}
-
 	cifs_in_send_inc(ses->server);
 	rc = smb_send_rqst(ses->server, num_rqst, rqst, flags);
 	cifs_in_send_dec(ses->server);
@@ -908,6 +928,12 @@ compound_send_recv(const unsigned int xid, struct cifs_ses *ses,
 			midQ[i]->resp_buf = NULL;
 	}
 out:
+	/*
+	 * This will dequeue all mids. After this it is important that the
+	 * demultiplex_thread will not process any of these mids any futher.
+	 * This is prevented above by using a noop callback that will not
+	 * wake this thread except for the very last PDU.
+	 */
 	for (i = 0; i < num_rqst; i++)
 		cifs_delete_mid(midQ[i]);
 	add_credits(ses->server, credits, optype);
