@@ -5,6 +5,34 @@ next/soc
 next/dt
 	socfgpa/updates
 		git://git.kernel.org/pub/scm/linux/kernel/git/dinguyen/linux tags/socfpga_updates_for_v4.20_part1
+	renesas/dt
+		https://git.kernel.org/pub/scm/linux/kernel/git/horms/renesas tags/renesas-arm-dt-for-v4.20
+	renesas/dt64
+		https://git.kernel.org/pub/scm/linux/kernel/git/horms/renesas tags/renesas-arm64-dt-for-v4.20
+	rockchip/dt64
+		git://git.kernel.org/pub/scm/linux/kernel/git/mmind/linux-rockchip tags/v4.20-rockchip-dts64-1
+	amlogic/dt64
+		https://git.kernel.org/pub/scm/linux/kernel/git/khilman/linux-amlogic tags/amlogic-dt64
+	broadcom/dt
+		https://github.com/Broadcom/stblinux tags/arm-soc/for-4.20/devicetree
+	broadcom/dt64
+		https://github.com/Broadcom/stblinux tags/arm-soc/for-4.20/devicetree-arm64
+	arm/juno-dt
+		git://git.kernel.org/pub/scm/linux/kernel/git/sudeep.holla/linux tags/juno-updates-4.20
+	ti/am654-dt
+		git://git.kernel.org/pub/scm/linux/kernel/git/kristo/linux tags/am654-for-v4.20
+	aspeed/devicetree
+		git://git.kernel.org/pub/scm/linux/kernel/git/joel/aspeed tags/aspeed-4.20-devicetree
+	ux500/dts
+		git://git.kernel.org/pub/scm/linux/kernel/git/linusw/linux-stericsson tags/ux500-dts-arm-soc
+	stm32/dt
+		git://git.kernel.org/pub/scm/linux/kernel/git/atorgue/stm32 tags/stm32-dt-for-v4.20-1
+	hisi/dt64
+		git://github.com/hisilicon/linux-hisi tags/hisi-arm64-dt-for-4.20
+	hisi/dt
+		git://github.com/hisilicon/linux-hisi tags/hisi-arm32-dt-for-4.20
+	samsung/soc
+		https://git.kernel.org/pub/scm/linux/kernel/git/krzk/linux tags/samsung-soc-4.20
 
 next/drivers
 	drivers/tee
@@ -16,11 +44,7 @@ next/late
 
 fixes
 	patch
-		firmware: arm_scmi: fix divide by zero when sustained_perf_level is zero
-	<no branch> (d07f05fb86439c41dd6967c94be3ba3837b21567)
-		https://github.com/Broadcom/stblinux tags/arm-soc/for-4.19/drivers-fixes
-	patch
-		memory: ti-aemif: fix a potential NULL-pointer dereference
-	<no branch> (d177c8b61d6b4ef360b1c2682e4d8e3bae01738b)
-		https://git.kernel.org/pub/scm/linux/kernel/git/sunxi/linux tags/sunxi-fixes-for-4.19
+		MAINTAINERS: update the Annapurna Labs maintainer email
+	<no branch> (13b91ed77a65cf3bf23353880245d0cbd9138294)
+		https://git.kernel.org/pub/scm/linux/kernel/git/sunxi/linux tags/sunxi-fixes-for-4.19-2
 
