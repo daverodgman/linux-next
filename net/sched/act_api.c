@@ -246,6 +246,20 @@ nla_put_failure:
 	goto done;
 }
 
+static int tcf_idr_release_unsafe(struct tc_action *p)
+{
+	if (atomic_read(&p->tcfa_bindcnt) > 0)
+		return -EPERM;
+
+	if (refcount_dec_and_test(&p->tcfa_refcnt)) {
+		idr_remove(&p->idrinfo->action_idr, p->tcfa_index);
+		tcf_action_cleanup(p);
+		return ACT_P_DELETED;
+	}
+
+	return 0;
+}
+
 static int tcf_del_walker(struct tcf_idrinfo *idrinfo, struct sk_buff *skb,
 			  const struct tc_action_ops *ops)
 {
@@ -262,15 +276,19 @@ static int tcf_del_walker(struct tcf_idrinfo *idrinfo, struct sk_buff *skb,
 	if (nla_put_string(skb, TCA_KIND, ops->kind))
 		goto nla_put_failure;
 
+	spin_lock(&idrinfo->lock);
 	idr_for_each_entry_ul(idr, p, id) {
-		ret = __tcf_idr_release(p, false, true);
+		ret = tcf_idr_release_unsafe(p);
 		if (ret == ACT_P_DELETED) {
 			module_put(ops->owner);
 			n_i++;
 		} else if (ret < 0) {
+			spin_unlock(&idrinfo->lock);
 			goto nla_put_failure;
 		}
 	}
+	spin_unlock(&idrinfo->lock);
+
 	if (nla_put_u32(skb, TCA_FCNT, n_i))
 		goto nla_put_failure;
 	nla_nest_end(skb, nest);
@@ -1073,12 +1091,14 @@ static struct tc_action *tcf_action_get_1(struct net *net, struct nlattr *nla,
 	err = -EINVAL;
 	ops = tc_lookup_action(tb[TCA_ACT_KIND]);
 	if (!ops) { /* could happen in batch of actions */
-		NL_SET_ERR_MSG(extack, "Specified TC action not found");
+		NL_SET_ERR_MSG(extack, "Specified TC action kind not found");
 		goto err_out;
 	}
 	err = -ENOENT;
-	if (ops->lookup(net, &a, index, extack) == 0)
+	if (ops->lookup(net, &a, index) == 0) {
+		NL_SET_ERR_MSG(extack, "TC action with specified index not found");
 		goto err_mod;
+	}
 
 	module_put(ops->owner);
 	return a;
