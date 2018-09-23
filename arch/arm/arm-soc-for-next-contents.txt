@@ -1,6 +1,7 @@
 next/soc
 	patch
 		ARM: u300: Delete dummy SPI chip
+		MAINTAINERS: Update stm32 entry
 
 next/dt
 	socfgpa/updates
