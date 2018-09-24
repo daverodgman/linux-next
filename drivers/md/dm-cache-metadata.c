@@ -1035,7 +1035,11 @@ static bool cmd_read_lock(struct dm_cache_metadata *cmd)
 #define READ_UNLOCK(cmd) \
 	up_read(&(cmd)->root_lock)
 
-int dm_cache_resize(struct dm_cache_metadata *cmd, dm_cblock_t new_cache_size)
+static bool hints_array_available(struct dm_cache_metadata *cmd,
+				  struct dm_cache_policy *policy);
+
+int dm_cache_resize(struct dm_cache_metadata *cmd, struct dm_cache_policy *policy,
+		    dm_cblock_t new_cache_size)
 {
 	int r;
 	bool clean;
@@ -1064,6 +1068,17 @@ int dm_cache_resize(struct dm_cache_metadata *cmd, dm_cblock_t new_cache_size)
 			    &null_mapping, &cmd->root);
 	if (r)
 		goto out;
+
+	if (hints_array_available(cmd, policy)) {
+		__le32 null_hint = cpu_to_le32(0);
+
+		__dm_bless_for_disk(&null_hint);
+		r = dm_array_resize(&cmd->hint_info, cmd->hint_root,
+				    from_cblock(cmd->cache_blocks), from_cblock(new_cache_size),
+				    &null_hint, &cmd->hint_root);
+		if (r)
+			goto out;
+	}
 
 	if (separate_dirty_bits(cmd)) {
 		r = dm_bitset_resize(&cmd->dirty_info, cmd->dirty_root,
