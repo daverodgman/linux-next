@@ -23,9 +23,9 @@
 /* Recommended to rewrite for BENAND */
 #define TOSHIBA_NAND_STATUS_REWRITE_RECOMMENDED	BIT(3)
 
-static int toshiba_nand_benand_eccstatus(struct mtd_info *mtd,
-					 struct nand_chip *chip)
+static int toshiba_nand_benand_eccstatus(struct nand_chip *chip)
 {
+	struct mtd_info *mtd = nand_to_mtd(chip);
 	int ret;
 	unsigned int max_bitflips = 0;
 	u8 status;
@@ -58,7 +58,7 @@ toshiba_nand_read_page_benand(struct nand_chip *chip, uint8_t *buf,
 	if (ret)
 		return ret;
 
-	return toshiba_nand_benand_eccstatus(mtd, chip);
+	return toshiba_nand_benand_eccstatus(chip);
 }
 
 static int
@@ -73,7 +73,7 @@ toshiba_nand_read_subpage_benand(struct nand_chip *chip, uint32_t data_offs,
 	if (ret)
 		return ret;
 
-	return toshiba_nand_benand_eccstatus(mtd, chip);
+	return toshiba_nand_benand_eccstatus(chip);
 }
 
 static void toshiba_nand_benand_init(struct nand_chip *chip)
