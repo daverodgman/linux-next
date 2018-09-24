@@ -78,6 +78,10 @@ static bool sig_task_ignored(struct task_struct *t, int sig, bool force)
 
 	handler = sig_handler(t, sig);
 
+	/* SIGKILL and SIGSTOP may not be sent to the global init */
+	if (unlikely(is_global_init(t) && sig_kernel_only(sig)))
+		return true;
+
 	if (unlikely(t->signal->flags & SIGNAL_UNKILLABLE) &&
 	    handler == SIG_DFL && !(force && sig_kernel_only(sig)))
 		return true;
@@ -172,6 +176,7 @@ void recalc_sigpending(void)
 		clear_thread_flag(TIF_SIGPENDING);
 
 }
+EXPORT_SYMBOL(recalc_sigpending);
 
 void calculate_sigpending(void)
 {
@@ -462,6 +467,7 @@ void flush_signals(struct task_struct *t)
 	flush_sigqueue(&t->signal->shared_pending);
 	spin_unlock_irqrestore(&t->sighand->siglock, flags);
 }
+EXPORT_SYMBOL(flush_signals);
 
 #ifdef CONFIG_POSIX_TIMERS
 static void __flush_itimer_signals(struct sigpending *pending)
@@ -680,6 +686,7 @@ int dequeue_signal(struct task_struct *tsk, sigset_t *mask, siginfo_t *info)
 #endif
 	return signr;
 }
+EXPORT_SYMBOL_GPL(dequeue_signal);
 
 /*
  * Tell a process that it has a new active signal..
@@ -732,7 +739,7 @@ static void flush_sigqueue_mask(sigset_t *mask, struct sigpending *s)
 
 static inline int is_si_special(const struct siginfo *info)
 {
-	return info <= SEND_SIG_FORCED;
+	return info <= SEND_SIG_PRIV;
 }
 
 static inline bool si_fromuser(const struct siginfo *info)
@@ -1035,7 +1042,7 @@ static int __send_signal(int sig, struct siginfo *info, struct task_struct *t,
 
 	result = TRACE_SIGNAL_IGNORED;
 	if (!prepare_signal(sig, t,
-			from_ancestor_ns || (info == SEND_SIG_FORCED)))
+			from_ancestor_ns || (info == SEND_SIG_PRIV)))
 		goto ret;
 
 	pending = (type != PIDTYPE_PID) ? &t->signal->shared_pending : &t->pending;
@@ -1050,10 +1057,10 @@ static int __send_signal(int sig, struct siginfo *info, struct task_struct *t,
 
 	result = TRACE_SIGNAL_DELIVERED;
 	/*
-	 * fast-pathed signals for kernel-internal things like SIGSTOP
-	 * or SIGKILL.
+	 * Skip useless siginfo allocation for SIGKILL SIGSTOP,
+	 * and kernel threads.
 	 */
-	if (info == SEND_SIG_FORCED)
+	if (sig_kernel_only(sig) || (t->flags & PF_KTHREAD))
 		goto out_set;
 
 	/*
@@ -1195,12 +1202,6 @@ __group_send_sig_info(int sig, struct siginfo *info, struct task_struct *p)
 	return send_signal(sig, info, p, PIDTYPE_TGID);
 }
 
-static int
-specific_send_sig_info(int sig, struct siginfo *info, struct task_struct *t)
-{
-	return send_signal(sig, info, t, PIDTYPE_PID);
-}
-
 int do_send_sig_info(int sig, struct siginfo *info, struct task_struct *p,
 			enum pid_type type)
 {
@@ -1250,7 +1251,7 @@ force_sig_info(int sig, struct siginfo *info, struct task_struct *t)
 	 */
 	if (action->sa.sa_handler == SIG_DFL && !t->ptrace)
 		t->signal->flags &= ~SIGNAL_UNKILLABLE;
-	ret = specific_send_sig_info(sig, info, t);
+	ret = send_signal(sig, info, t, PIDTYPE_PID);
 	spin_unlock_irqrestore(&t->sighand->siglock, flags);
 
 	return ret;
@@ -1492,6 +1493,7 @@ int send_sig_info(int sig, struct siginfo *info, struct task_struct *p)
 
 	return do_send_sig_info(sig, info, p, PIDTYPE_PID);
 }
+EXPORT_SYMBOL(send_sig_info);
 
 #define __si_special(priv) \
 	((priv) ? SEND_SIG_PRIV : SEND_SIG_NOINFO)
@@ -1501,11 +1503,13 @@ send_sig(int sig, struct task_struct *p, int priv)
 {
 	return send_sig_info(sig, __si_special(priv), p);
 }
+EXPORT_SYMBOL(send_sig);
 
 void force_sig(int sig, struct task_struct *p)
 {
 	force_sig_info(sig, SEND_SIG_PRIV, p);
 }
+EXPORT_SYMBOL(force_sig);
 
 /*
  * When things go south during signal handling, we
@@ -2326,7 +2330,7 @@ static int ptrace_signal(int signr, siginfo_t *info)
 
 	/* If the (new) signal is now blocked, requeue it.  */
 	if (sigismember(&current->blocked, signr)) {
-		specific_send_sig_info(signr, info, current);
+		send_signal(signr, info, current, PIDTYPE_PID);
 		signr = 0;
 	}
 
@@ -2636,14 +2640,6 @@ out:
 	}
 }
 
-EXPORT_SYMBOL(recalc_sigpending);
-EXPORT_SYMBOL_GPL(dequeue_signal);
-EXPORT_SYMBOL(flush_signals);
-EXPORT_SYMBOL(force_sig);
-EXPORT_SYMBOL(send_sig);
-EXPORT_SYMBOL(send_sig_info);
-EXPORT_SYMBOL(sigprocmask);
-
 /*
  * System call entry points.
  */
@@ -2737,6 +2733,7 @@ int sigprocmask(int how, sigset_t *set, sigset_t *oldset)
 	__set_current_blocked(&newset);
 	return 0;
 }
+EXPORT_SYMBOL(sigprocmask);
 
 /**
  *  sys_rt_sigprocmask - change the list of currently blocked signals
