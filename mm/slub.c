@@ -3621,9 +3621,7 @@ static void list_slab_objects(struct kmem_cache *s, struct page *page,
 #ifdef CONFIG_SLUB_DEBUG
 	void *addr = page_address(page);
 	void *p;
-	unsigned long *map = kcalloc(BITS_TO_LONGS(page->objects),
-				     sizeof(long),
-				     GFP_ATOMIC);
+	unsigned long *map = bitmap_zalloc(page->objects, GFP_ATOMIC);
 	if (!map)
 		return;
 	slab_err(s, page, text, s->name);
@@ -3638,7 +3636,7 @@ static void list_slab_objects(struct kmem_cache *s, struct page *page,
 		}
 	}
 	slab_unlock(page);
-	kfree(map);
+	bitmap_free(map);
 #endif
 }
 
@@ -4411,10 +4409,8 @@ static long validate_slab_cache(struct kmem_cache *s)
 {
 	int node;
 	unsigned long count = 0;
-	unsigned long *map = kmalloc_array(BITS_TO_LONGS(oo_objects(s->max)),
-					   sizeof(unsigned long),
-					   GFP_KERNEL);
 	struct kmem_cache_node *n;
+	unsigned long *map = bitmap_alloc(oo_objects(s->max), GFP_KERNEL);
 
 	if (!map)
 		return -ENOMEM;
@@ -4422,7 +4418,7 @@ static long validate_slab_cache(struct kmem_cache *s)
 	flush_all(s);
 	for_each_kmem_cache_node(s, node, n)
 		count += validate_slab_node(s, n, map);
-	kfree(map);
+	bitmap_free(map);
 	return count;
 }
 /*
@@ -4573,14 +4569,12 @@ static int list_locations(struct kmem_cache *s, char *buf,
 	unsigned long i;
 	struct loc_track t = { 0, 0, NULL };
 	int node;
-	unsigned long *map = kmalloc_array(BITS_TO_LONGS(oo_objects(s->max)),
-					   sizeof(unsigned long),
-					   GFP_KERNEL);
 	struct kmem_cache_node *n;
+	unsigned long *map = bitmap_alloc(oo_objects(s->max), GFP_KERNEL);
 
 	if (!map || !alloc_loc_track(&t, PAGE_SIZE / sizeof(struct location),
 				     GFP_KERNEL)) {
-		kfree(map);
+		bitmap_free(map);
 		return sprintf(buf, "Out of memory\n");
 	}
 	/* Push back cpu slabs */
@@ -4646,7 +4640,7 @@ static int list_locations(struct kmem_cache *s, char *buf,
 	}
 
 	free_loc_track(&t);
-	kfree(map);
+	bitmap_free(map);
 	if (!t.count)
 		len += sprintf(buf, "No data\n");
 	return len;
@@ -4657,6 +4651,7 @@ static int list_locations(struct kmem_cache *s, char *buf,
 static void __init resiliency_test(void)
 {
 	u8 *p;
+	int type = KMALLOC_NORMAL;
 
 	BUILD_BUG_ON(KMALLOC_MIN_SIZE > 16 || KMALLOC_SHIFT_HIGH < 10);
 
@@ -4669,7 +4664,7 @@ static void __init resiliency_test(void)
 	pr_err("\n1. kmalloc-16: Clobber Redzone/next pointer 0x12->0x%p\n\n",
 	       p + 16);
 
-	validate_slab_cache(kmalloc_caches[4]);
+	validate_slab_cache(kmalloc_caches[type][4]);
 
 	/* Hmmm... The next two are dangerous */
 	p = kzalloc(32, GFP_KERNEL);
@@ -4678,33 +4673,33 @@ static void __init resiliency_test(void)
 	       p);
 	pr_err("If allocated object is overwritten then not detectable\n\n");
 
-	validate_slab_cache(kmalloc_caches[5]);
+	validate_slab_cache(kmalloc_caches[type][5]);
 	p = kzalloc(64, GFP_KERNEL);
 	p += 64 + (get_cycles() & 0xff) * sizeof(void *);
 	*p = 0x56;
 	pr_err("\n3. kmalloc-64: corrupting random byte 0x56->0x%p\n",
 	       p);
 	pr_err("If allocated object is overwritten then not detectable\n\n");
-	validate_slab_cache(kmalloc_caches[6]);
+	validate_slab_cache(kmalloc_caches[type][6]);
 
 	pr_err("\nB. Corruption after free\n");
 	p = kzalloc(128, GFP_KERNEL);
 	kfree(p);
 	*p = 0x78;
 	pr_err("1. kmalloc-128: Clobber first word 0x78->0x%p\n\n", p);
-	validate_slab_cache(kmalloc_caches[7]);
+	validate_slab_cache(kmalloc_caches[type][7]);
 
 	p = kzalloc(256, GFP_KERNEL);
 	kfree(p);
 	p[50] = 0x9a;
 	pr_err("\n2. kmalloc-256: Clobber 50th byte 0x9a->0x%p\n\n", p);
-	validate_slab_cache(kmalloc_caches[8]);
+	validate_slab_cache(kmalloc_caches[type][8]);
 
 	p = kzalloc(512, GFP_KERNEL);
 	kfree(p);
 	p[512] = 0xab;
 	pr_err("\n3. kmalloc-512: Clobber redzone 0xab->0x%p\n\n", p);
-	validate_slab_cache(kmalloc_caches[9]);
+	validate_slab_cache(kmalloc_caches[type][9]);
 }
 #else
 #ifdef CONFIG_SYSFS
