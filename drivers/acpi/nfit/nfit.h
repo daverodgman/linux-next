@@ -177,6 +177,8 @@ struct nfit_memdev {
 enum nfit_mem_flags {
 	NFIT_MEM_LSR,
 	NFIT_MEM_LSW,
+	NFIT_MEM_DIRTY,
+	NFIT_MEM_DIRTY_COUNT,
 };
 
 #define NFIT_DIMM_ID_LEN	22
@@ -201,6 +203,7 @@ struct nfit_mem {
 	struct resource *flush_wpq;
 	unsigned long dsm_mask;
 	unsigned long flags;
+	u32 dirty_shutdown;
 	int family;
 	char id[NFIT_DIMM_ID_LEN+1];
 };

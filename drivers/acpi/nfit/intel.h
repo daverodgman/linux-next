@@ -6,6 +6,40 @@
 #ifndef _NFIT_INTEL_H_
 #define _NFIT_INTEL_H_
 
+/*
+ * While the security ops require CONFIG_X86 due to the need to
+ * coordinate cache management, the ND_INTEL_SMART command could be
+ * generically supported on any arch.
+ */
+#define ND_INTEL_SMART 1
+
+#define ND_INTEL_SMART_SHUTDOWN_COUNT_VALID     (1 << 5)
+#define ND_INTEL_SMART_SHUTDOWN_VALID           (1 << 10)
+
+struct nd_intel_smart {
+	u32 status;
+	union {
+		struct {
+			u32 flags;
+			u8 reserved0[4];
+			u8 health;
+			u8 spares;
+			u8 life_used;
+			u8 alarm_flags;
+			u16 media_temperature;
+			u16 ctrl_temperature;
+			u32 shutdown_count;
+			u8 ait_status;
+			u16 pmic_temperature;
+			u8 reserved1[8];
+			u8 shutdown_state;
+			u32 vendor_size;
+			u8 vendor_data[92];
+		} __packed;
+		u8 data[128];
+	};
+} __packed;
+
 #ifdef CONFIG_X86
 
 extern const struct nvdimm_security_ops *intel_security_ops;
