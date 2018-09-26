@@ -23,8 +23,6 @@
 #include <linux/types.h>
 #include <linux/pci.h>
 #include "pciehp.h"
-#include <linux/interrupt.h>
-#include <linux/time.h>
 
 #include "../pci.h"
 
@@ -47,45 +45,30 @@ MODULE_PARM_DESC(pciehp_poll_time, "Polling mechanism frequency, in seconds");
 #define PCIE_MODULE_NAME "pciehp"
 
 static int set_attention_status(struct hotplug_slot *slot, u8 value);
-static int enable_slot(struct hotplug_slot *slot);
-static int disable_slot(struct hotplug_slot *slot);
 static int get_power_status(struct hotplug_slot *slot, u8 *value);
-static int get_attention_status(struct hotplug_slot *slot, u8 *value);
 static int get_latch_status(struct hotplug_slot *slot, u8 *value);
 static int get_adapter_status(struct hotplug_slot *slot, u8 *value);
-static int reset_slot(struct hotplug_slot *slot, int probe);
 
 static int init_slot(struct controller *ctrl)
 {
-	struct slot *slot = ctrl->slot;
-	struct hotplug_slot *hotplug = NULL;
-	struct hotplug_slot_info *info = NULL;
-	struct hotplug_slot_ops *ops = NULL;
+	struct hotplug_slot_ops *ops;
 	char name[SLOT_NAME_SIZE];
-	int retval = -ENOMEM;
-
-	hotplug = kzalloc(sizeof(*hotplug), GFP_KERNEL);
-	if (!hotplug)
-		goto out;
-
-	info = kzalloc(sizeof(*info), GFP_KERNEL);
-	if (!info)
-		goto out;
+	int retval;
 
 	/* Setup hotplug slot ops */
 	ops = kzalloc(sizeof(*ops), GFP_KERNEL);
 	if (!ops)
-		goto out;
+		return -ENOMEM;
 
-	ops->enable_slot = enable_slot;
-	ops->disable_slot = disable_slot;
+	ops->enable_slot = pciehp_sysfs_enable_slot;
+	ops->disable_slot = pciehp_sysfs_disable_slot;
 	ops->get_power_status = get_power_status;
 	ops->get_adapter_status = get_adapter_status;
-	ops->reset_slot = reset_slot;
+	ops->reset_slot = pciehp_reset_slot;
 	if (MRL_SENS(ctrl))
 		ops->get_latch_status = get_latch_status;
 	if (ATTN_LED(ctrl)) {
-		ops->get_attention_status = get_attention_status;
+		ops->get_attention_status = pciehp_get_attention_status;
 		ops->set_attention_status = set_attention_status;
 	} else if (ctrl->pcie->port->hotplug_user_indicators) {
 		ops->get_attention_status = pciehp_get_raw_indicator_status;
@@ -93,33 +76,24 @@ static int init_slot(struct controller *ctrl)
 	}
 
 	/* register this slot with the hotplug pci core */
-	hotplug->info = info;
-	hotplug->private = slot;
-	hotplug->ops = ops;
-	slot->hotplug_slot = hotplug;
+	ctrl->hotplug_slot.ops = ops;
 	snprintf(name, SLOT_NAME_SIZE, "%u", PSN(ctrl));
 
-	retval = pci_hp_initialize(hotplug,
+	retval = pci_hp_initialize(&ctrl->hotplug_slot,
 				   ctrl->pcie->port->subordinate, 0, name);
-	if (retval)
-		ctrl_err(ctrl, "pci_hp_initialize failed: error %d\n", retval);
-out:
 	if (retval) {
+		ctrl_err(ctrl, "pci_hp_initialize failed: error %d\n", retval);
 		kfree(ops);
-		kfree(info);
-		kfree(hotplug);
 	}
 	return retval;
 }
 
 static void cleanup_slot(struct controller *ctrl)
 {
-	struct hotplug_slot *hotplug_slot = ctrl->slot->hotplug_slot;
+	struct hotplug_slot *hotplug_slot = &ctrl->hotplug_slot;
 
 	pci_hp_destroy(hotplug_slot);
 	kfree(hotplug_slot->ops);
-	kfree(hotplug_slot->info);
-	kfree(hotplug_slot);
 }
 
 /*
@@ -127,77 +101,46 @@ static void cleanup_slot(struct controller *ctrl)
  */
 static int set_attention_status(struct hotplug_slot *hotplug_slot, u8 status)
 {
-	struct slot *slot = hotplug_slot->private;
-	struct pci_dev *pdev = slot->ctrl->pcie->port;
+	struct controller *ctrl = to_ctrl(hotplug_slot);
+	struct pci_dev *pdev = ctrl->pcie->port;
 
 	pci_config_pm_runtime_get(pdev);
-	pciehp_set_attention_status(slot, status);
+	pciehp_set_attention_status(ctrl, status);
 	pci_config_pm_runtime_put(pdev);
 	return 0;
-}
-
-
-static int enable_slot(struct hotplug_slot *hotplug_slot)
-{
-	struct slot *slot = hotplug_slot->private;
-
-	return pciehp_sysfs_enable_slot(slot);
-}
-
-
-static int disable_slot(struct hotplug_slot *hotplug_slot)
-{
-	struct slot *slot = hotplug_slot->private;
-
-	return pciehp_sysfs_disable_slot(slot);
 }
 
 static int get_power_status(struct hotplug_slot *hotplug_slot, u8 *value)
 {
-	struct slot *slot = hotplug_slot->private;
-	struct pci_dev *pdev = slot->ctrl->pcie->port;
+	struct controller *ctrl = to_ctrl(hotplug_slot);
+	struct pci_dev *pdev = ctrl->pcie->port;
 
 	pci_config_pm_runtime_get(pdev);
-	pciehp_get_power_status(slot, value);
+	pciehp_get_power_status(ctrl, value);
 	pci_config_pm_runtime_put(pdev);
-	return 0;
-}
-
-static int get_attention_status(struct hotplug_slot *hotplug_slot, u8 *value)
-{
-	struct slot *slot = hotplug_slot->private;
-
-	pciehp_get_attention_status(slot, value);
 	return 0;
 }
 
 static int get_latch_status(struct hotplug_slot *hotplug_slot, u8 *value)
 {
-	struct slot *slot = hotplug_slot->private;
-	struct pci_dev *pdev = slot->ctrl->pcie->port;
+	struct controller *ctrl = to_ctrl(hotplug_slot);
+	struct pci_dev *pdev = ctrl->pcie->port;
 
 	pci_config_pm_runtime_get(pdev);
-	pciehp_get_latch_status(slot, value);
+	pciehp_get_latch_status(ctrl, value);
 	pci_config_pm_runtime_put(pdev);
 	return 0;
 }
 
 static int get_adapter_status(struct hotplug_slot *hotplug_slot, u8 *value)
 {
-	struct slot *slot = hotplug_slot->private;
-	struct pci_dev *pdev = slot->ctrl->pcie->port;
+	struct controller *ctrl = to_ctrl(hotplug_slot);
+	struct pci_dev *pdev = ctrl->pcie->port;
 
 	pci_config_pm_runtime_get(pdev);
-	pciehp_get_adapter_status(slot, value);
+	*value = pciehp_card_present_or_link_active(ctrl);
 	pci_config_pm_runtime_put(pdev);
 	return 0;
-}
-
-static int reset_slot(struct hotplug_slot *hotplug_slot, int probe)
-{
-	struct slot *slot = hotplug_slot->private;
-
-	return pciehp_reset_slot(slot, probe);
 }
 
 /**
@@ -212,20 +155,19 @@ static int reset_slot(struct hotplug_slot *hotplug_slot, int probe)
  */
 static void pciehp_check_presence(struct controller *ctrl)
 {
-	struct slot *slot = ctrl->slot;
-	u8 occupied;
+	bool occupied;
 
 	down_read(&ctrl->reset_lock);
-	mutex_lock(&slot->lock);
+	mutex_lock(&ctrl->state_lock);
 
-	pciehp_get_adapter_status(slot, &occupied);
-	if ((occupied && (slot->state == OFF_STATE ||
-			  slot->state == BLINKINGON_STATE)) ||
-	    (!occupied && (slot->state == ON_STATE ||
-			   slot->state == BLINKINGOFF_STATE)))
+	occupied = pciehp_card_present_or_link_active(ctrl);
+	if ((occupied && (ctrl->state == OFF_STATE ||
+			  ctrl->state == BLINKINGON_STATE)) ||
+	    (!occupied && (ctrl->state == ON_STATE ||
+			   ctrl->state == BLINKINGOFF_STATE)))
 		pciehp_request(ctrl, PCI_EXP_SLTSTA_PDC);
 
-	mutex_unlock(&slot->lock);
+	mutex_unlock(&ctrl->state_lock);
 	up_read(&ctrl->reset_lock);
 }
 
@@ -233,7 +175,6 @@ static int pciehp_probe(struct pcie_device *dev)
 {
 	int rc;
 	struct controller *ctrl;
-	struct slot *slot;
 
 	/* If this is not a "hotplug" service, we have no business here. */
 	if (dev->service != PCIE_PORT_SERVICE_HP)
@@ -271,8 +212,7 @@ static int pciehp_probe(struct pcie_device *dev)
 	}
 
 	/* Publish to user space */
-	slot = ctrl->slot;
-	rc = pci_hp_add(slot->hotplug_slot);
+	rc = pci_hp_add(&ctrl->hotplug_slot);
 	if (rc) {
 		ctrl_err(ctrl, "Publication to user space failed (%d)\n", rc);
 		goto err_out_shutdown_notification;
@@ -295,7 +235,7 @@ static void pciehp_remove(struct pcie_device *dev)
 {
 	struct controller *ctrl = get_service_data(dev);
 
-	pci_hp_del(ctrl->slot->hotplug_slot);
+	pci_hp_del(&ctrl->hotplug_slot);
 	pcie_shutdown_notification(ctrl);
 	cleanup_slot(ctrl);
 	pciehp_release_ctrl(ctrl);
@@ -310,14 +250,13 @@ static int pciehp_suspend(struct pcie_device *dev)
 static int pciehp_resume_noirq(struct pcie_device *dev)
 {
 	struct controller *ctrl = get_service_data(dev);
-	struct slot *slot = ctrl->slot;
 
 	/* pci_restore_state() just wrote to the Slot Control register */
 	ctrl->cmd_started = jiffies;
 	ctrl->cmd_busy = true;
 
 	/* clear spurious events from rediscovery of inserted card */
-	if (slot->state == ON_STATE || slot->state == BLINKINGOFF_STATE)
+	if (ctrl->state == ON_STATE || ctrl->state == BLINKINGOFF_STATE)
 		pcie_clear_hotplug_events(ctrl);
 
 	return 0;
@@ -348,7 +287,7 @@ static struct pcie_port_service_driver hpdriver_portdrv = {
 #endif	/* PM */
 };
 
-static int __init pcied_init(void)
+int __init pcie_hp_init(void)
 {
 	int retval = 0;
 
@@ -359,4 +298,3 @@ static int __init pcied_init(void)
 
 	return retval;
 }
-device_initcall(pcied_init);
