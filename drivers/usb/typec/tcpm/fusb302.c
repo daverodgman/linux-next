@@ -48,13 +48,6 @@ enum toggling_mode {
 	TOGGLING_MODE_SRC,
 };
 
-static const char * const toggling_mode_name[] = {
-	[TOGGLINE_MODE_OFF]	= "toggling_OFF",
-	[TOGGLING_MODE_DRP]	= "toggling_DRP",
-	[TOGGLING_MODE_SNK]	= "toggling_SNK",
-	[TOGGLING_MODE_SRC]	= "toggling_SRC",
-};
-
 enum src_current_status {
 	SRC_CURRENT_DEFAULT,
 	SRC_CURRENT_MEDIUM,
@@ -1178,10 +1171,6 @@ static const u32 src_pdo[] = {
 	PDO_FIXED(5000, 400, PDO_FIXED_FLAGS),
 };
 
-static const u32 snk_pdo[] = {
-	PDO_FIXED(5000, 400, PDO_FIXED_FLAGS),
-};
-
 static const struct tcpc_config fusb302_tcpc_config = {
 	.src_pdo = src_pdo,
 	.nr_src_pdo = ARRAY_SIZE(src_pdo),
@@ -1730,11 +1719,13 @@ static int fusb302_probe(struct i2c_client *client,
 		return -ENOMEM;
 
 	chip->i2c_client = client;
-	i2c_set_clientdata(client, chip);
 	chip->dev = &client->dev;
 	chip->tcpc_config = fusb302_tcpc_config;
 	chip->tcpc_dev.config = &chip->tcpc_config;
 	mutex_init(&chip->lock);
+
+	chip->tcpc_dev.fwnode =
+		device_get_named_child_node(dev, "connector");
 
 	if (!device_property_read_u32(dev, "fcs,operating-sink-microwatt", &v))
 		chip->tcpc_config.operating_snk_mw = v / 1000;
@@ -1756,21 +1747,16 @@ static int fusb302_probe(struct i2c_client *client,
 			return -EPROBE_DEFER;
 	}
 
-	fusb302_debugfs_init(chip);
+	chip->vbus = devm_regulator_get(chip->dev, "vbus");
+	if (IS_ERR(chip->vbus))
+		return PTR_ERR(chip->vbus);
 
 	chip->wq = create_singlethread_workqueue(dev_name(chip->dev));
-	if (!chip->wq) {
-		ret = -ENOMEM;
-		goto clear_client_data;
-	}
+	if (!chip->wq)
+		return -ENOMEM;
+
 	INIT_DELAYED_WORK(&chip->bc_lvl_handler, fusb302_bc_lvl_handler_work);
 	init_tcpc_dev(&chip->tcpc_dev);
-
-	chip->vbus = devm_regulator_get(chip->dev, "vbus");
-	if (IS_ERR(chip->vbus)) {
-		ret = PTR_ERR(chip->vbus);
-		goto destroy_workqueue;
-	}
 
 	if (client->irq) {
 		chip->gpio_int_n_irq = client->irq;
@@ -1797,15 +1783,15 @@ static int fusb302_probe(struct i2c_client *client,
 		goto tcpm_unregister_port;
 	}
 	enable_irq_wake(chip->gpio_int_n_irq);
+	fusb302_debugfs_init(chip);
+	i2c_set_clientdata(client, chip);
+
 	return ret;
 
 tcpm_unregister_port:
 	tcpm_unregister_port(chip->tcpm_port);
 destroy_workqueue:
 	destroy_workqueue(chip->wq);
-clear_client_data:
-	i2c_set_clientdata(client, NULL);
-	fusb302_debugfs_exit(chip);
 
 	return ret;
 }
@@ -1816,7 +1802,6 @@ static int fusb302_remove(struct i2c_client *client)
 
 	tcpm_unregister_port(chip->tcpm_port);
 	destroy_workqueue(chip->wq);
-	i2c_set_clientdata(client, NULL);
 	fusb302_debugfs_exit(chip);
 
 	return 0;
