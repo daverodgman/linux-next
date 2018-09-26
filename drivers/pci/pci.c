@@ -5190,6 +5190,8 @@ static int pci_bus_reset(struct pci_bus *bus, int probe)
 	return ret;
 }
 
+DEFINE_MUTEX(pci_slot_mutex);
+
 /**
  * pci_bus_error_reset - reset the bridge's subordinate bus
  * @bridge: The parent device that connects to the bus to reset
