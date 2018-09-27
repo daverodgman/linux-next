@@ -38,9 +38,14 @@
 #define FAN_UNLIMITED_MARKS	0x00000020
 #define FAN_ENABLE_AUDIT	0x00000040
 
+/* Flags to determine fanotify event format */
+#define FAN_EVENT_INFO_TID	0x00000100	/* event->pid is thread id */
+
+#define FAN_EVENT_INFO_FLAGS	(FAN_EVENT_INFO_TID)
+
 #define FAN_ALL_INIT_FLAGS	(FAN_CLOEXEC | FAN_NONBLOCK | \
-				 FAN_ALL_CLASS_BITS | FAN_UNLIMITED_QUEUE |\
-				 FAN_UNLIMITED_MARKS)
+				 FAN_ALL_CLASS_BITS | FAN_EVENT_INFO_FLAGS | \
+				 FAN_UNLIMITED_QUEUE | FAN_UNLIMITED_MARKS)
 
 /* flags used for fanotify_modify_mark() */
 #define FAN_MARK_ADD		0x00000001
