@@ -25,6 +25,10 @@
 MODULE_ALIAS_MISCDEV(FUSE_MINOR);
 MODULE_ALIAS("devname:fuse");
 
+/* Ordinary requests have even IDs, while interrupts IDs are odd */
+#define FUSE_INT_REQ_BIT (1ULL << 0)
+#define FUSE_REQ_ID_STEP (1ULL << 1)
+
 static struct kmem_cache *fuse_req_cachep;
 
 static struct fuse_dev *fuse_get_dev(struct file *file)
@@ -319,7 +323,13 @@ static unsigned len_args(unsigned numargs, struct fuse_arg *args)
 
 static u64 fuse_get_unique(struct fuse_iqueue *fiq)
 {
-	return ++fiq->reqctr;
+	fiq->reqctr += FUSE_REQ_ID_STEP;
+	return fiq->reqctr;
+}
+
+static unsigned int fuse_req_hash(u64 unique)
+{
+	return hash_long(unique & ~FUSE_INT_REQ_BIT, FUSE_PQ_HASH_BITS);
 }
 
 static void queue_request(struct fuse_iqueue *fiq, struct fuse_req *req)
@@ -1084,12 +1094,11 @@ __releases(fiq->waitq.lock)
 	int err;
 
 	list_del_init(&req->intr_entry);
-	req->intr_unique = fuse_get_unique(fiq);
 	memset(&ih, 0, sizeof(ih));
 	memset(&arg, 0, sizeof(arg));
 	ih.len = reqsize;
 	ih.opcode = FUSE_INTERRUPT;
-	ih.unique = req->intr_unique;
+	ih.unique = (req->in.h.unique | FUSE_INT_REQ_BIT);
 	arg.unique = req->in.h.unique;
 
 	spin_unlock(&fiq->waitq.lock);
@@ -1238,6 +1247,7 @@ static ssize_t fuse_dev_do_read(struct fuse_dev *fud, struct file *file,
 	struct fuse_req *req;
 	struct fuse_in *in;
 	unsigned reqsize;
+	unsigned int hash;
 
  restart:
 	spin_lock(&fiq->waitq.lock);
@@ -1310,7 +1320,8 @@ static ssize_t fuse_dev_do_read(struct fuse_dev *fud, struct file *file,
 		err = reqsize;
 		goto out_end;
 	}
-	list_move_tail(&req->list, &fpq->processing);
+	hash = fuse_req_hash(req->in.h.unique);
+	list_move_tail(&req->list, &fpq->processing[hash]);
 	spin_unlock(&fpq->lock);
 	set_bit(FR_SENT, &req->flags);
 	/* matches barrier in request_wait_answer() */
@@ -1792,10 +1803,11 @@ static int fuse_notify(struct fuse_conn *fc, enum fuse_notify_code code,
 /* Look up request on processing list by unique ID */
 static struct fuse_req *request_find(struct fuse_pqueue *fpq, u64 unique)
 {
+	unsigned int hash = fuse_req_hash(unique);
 	struct fuse_req *req;
 
-	list_for_each_entry(req, &fpq->processing, list) {
-		if (req->in.h.unique == unique || req->intr_unique == unique)
+	list_for_each_entry(req, &fpq->processing[hash], list) {
+		if (req->in.h.unique == unique)
 			return req;
 	}
 	return NULL;
@@ -1869,12 +1881,12 @@ static ssize_t fuse_dev_do_write(struct fuse_dev *fud,
 	if (!fpq->connected)
 		goto err_unlock_pq;
 
-	req = request_find(fpq, oh.unique);
+	req = request_find(fpq, oh.unique & ~FUSE_INT_REQ_BIT);
 	if (!req)
 		goto err_unlock_pq;
 
-	/* Is it an interrupt reply? */
-	if (req->intr_unique == oh.unique) {
+	/* Is it an interrupt reply ID? */
+	if (oh.unique & FUSE_INT_REQ_BIT) {
 		spin_unlock(&fpq->lock);
 
 		err = -EINVAL;
@@ -2102,6 +2114,7 @@ void fuse_abort_conn(struct fuse_conn *fc, bool is_abort)
 		struct fuse_dev *fud;
 		struct fuse_req *req, *next;
 		LIST_HEAD(to_end);
+		unsigned int i;
 
 		fc->connected = 0;
 		fc->blocked = 0;
@@ -2123,7 +2136,9 @@ void fuse_abort_conn(struct fuse_conn *fc, bool is_abort)
 				}
 				spin_unlock(&req->waitq.lock);
 			}
-			list_splice_tail_init(&fpq->processing, &to_end);
+			for (i = 0; i < FUSE_PQ_HASH_SIZE; i++)
+				list_splice_tail_init(&fpq->processing[i],
+						      &to_end);
 			spin_unlock(&fpq->lock);
 		}
 		fc->max_background = UINT_MAX;
@@ -2163,10 +2178,12 @@ int fuse_dev_release(struct inode *inode, struct file *file)
 		struct fuse_conn *fc = fud->fc;
 		struct fuse_pqueue *fpq = &fud->pq;
 		LIST_HEAD(to_end);
+		unsigned int i;
 
 		spin_lock(&fpq->lock);
 		WARN_ON(!list_empty(&fpq->io));
-		list_splice_init(&fpq->processing, &to_end);
+		for (i = 0; i < FUSE_PQ_HASH_SIZE; i++)
+			list_splice_init(&fpq->processing[i], &to_end);
 		spin_unlock(&fpq->lock);
 
 		end_requests(fc, &to_end);
