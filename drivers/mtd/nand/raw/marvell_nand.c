@@ -614,6 +614,7 @@ static int marvell_nfc_wait_op(struct nand_chip *chip, unsigned int timeout_ms)
 {
 	struct marvell_nfc *nfc = to_marvell_nfc(chip->controller);
 	int ret;
+	u32 st;
 
 	/* Timeout is expressed in ms */
 	if (!timeout_ms)
@@ -622,6 +623,15 @@ static int marvell_nfc_wait_op(struct nand_chip *chip, unsigned int timeout_ms)
 	init_completion(&nfc->complete);
 
 	marvell_nfc_enable_int(nfc, NDCR_RDYM);
+
+	/*
+	 * Check if the NDSR_RDY bits have already been set before the
+	 * interrupt was enabled.
+	 */
+	st = readl_relaxed(nfc->regs + NDSR);
+	if (st & (NDSR_RDY(0) | NDSR_RDY(1)))
+		complete(&nfc->complete);
+
 	ret = wait_for_completion_timeout(&nfc->complete,
 					  msecs_to_jiffies(timeout_ms));
 	marvell_nfc_disable_int(nfc, NDCR_RDYM);
