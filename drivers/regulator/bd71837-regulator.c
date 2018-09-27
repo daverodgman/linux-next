@@ -9,6 +9,7 @@
 #include <linux/kernel.h>
 #include <linux/mfd/rohm-bd718x7.h>
 #include <linux/module.h>
+#include <linux/of.h>
 #include <linux/platform_device.h>
 #include <linux/regulator/driver.h>
 #include <linux/regulator/machine.h>
@@ -388,10 +389,9 @@ static const struct regulator_desc bd71837_regulators[] = {
 		.ops = &bd71837_ldo_regulator_nolinear_ops,
 		.type = REGULATOR_VOLTAGE,
 		.volt_table = &ldo_2_volts[0],
+		.n_voltages = ARRAY_SIZE(ldo_2_volts),
 		.vsel_reg = BD71837_REG_LDO2_VOLT,
 		.vsel_mask = LDO2_MASK,
-		.n_voltages = ARRAY_SIZE(ldo_2_volts),
-		.n_voltages = BD71837_LDO2_VOLTAGE_NUM,
 		.enable_reg = BD71837_REG_LDO2_VOLT,
 		.enable_mask = BD71837_LDO_EN,
 		.owner = THIS_MODULE,
