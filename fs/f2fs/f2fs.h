@@ -1088,6 +1088,7 @@ enum {
 	SBI_NEED_SB_WRITE,			/* need to recover superblock */
 	SBI_NEED_CP,				/* need to checkpoint */
 	SBI_IS_SHUTDOWN,			/* shutdown by ioctl */
+	SBI_IS_RECOVERED,			/* recovered orphan/data */
 };
 
 enum {
@@ -1306,9 +1307,9 @@ struct f2fs_sb_info {
 };
 
 #ifdef CONFIG_F2FS_FAULT_INJECTION
-#define f2fs_show_injection_info(type)				\
-	printk("%sF2FS-fs : inject %s in %s of %pF\n",		\
-		KERN_INFO, f2fs_fault_name[type],		\
+#define f2fs_show_injection_info(type)					\
+	printk_ratelimited("%sF2FS-fs : inject %s in %s of %pF\n",	\
+		KERN_INFO, f2fs_fault_name[type],			\
 		__func__, __builtin_return_address(0))
 static inline bool time_to_inject(struct f2fs_sb_info *sbi, int type)
 {
@@ -2942,7 +2943,7 @@ void f2fs_allocate_data_block(struct f2fs_sb_info *sbi, struct page *page,
 			struct f2fs_io_info *fio, bool add_list);
 void f2fs_wait_on_page_writeback(struct page *page,
 			enum page_type type, bool ordered);
-void f2fs_wait_on_block_writeback(struct f2fs_sb_info *sbi, block_t blkaddr);
+void f2fs_wait_on_block_writeback(struct inode *inode, block_t blkaddr);
 void f2fs_write_data_summaries(struct f2fs_sb_info *sbi, block_t start_blk);
 void f2fs_write_node_summaries(struct f2fs_sb_info *sbi, block_t start_blk);
 int f2fs_lookup_journal_in_cursum(struct f2fs_journal *journal, int type,
@@ -3399,11 +3400,20 @@ static inline int get_blkz_type(struct f2fs_sb_info *sbi,
 }
 #endif
 
-static inline bool f2fs_discard_en(struct f2fs_sb_info *sbi)
+static inline bool f2fs_hw_should_discard(struct f2fs_sb_info *sbi)
 {
-	struct request_queue *q = bdev_get_queue(sbi->sb->s_bdev);
+	return f2fs_sb_has_blkzoned(sbi->sb);
+}
 
-	return blk_queue_discard(q) || f2fs_sb_has_blkzoned(sbi->sb);
+static inline bool f2fs_hw_support_discard(struct f2fs_sb_info *sbi)
+{
+	return blk_queue_discard(bdev_get_queue(sbi->sb->s_bdev));
+}
+
+static inline bool f2fs_realtime_discard_enable(struct f2fs_sb_info *sbi)
+{
+	return (test_opt(sbi, DISCARD) && f2fs_hw_support_discard(sbi)) ||
+					f2fs_hw_should_discard(sbi);
 }
 
 static inline void set_opt_mode(struct f2fs_sb_info *sbi, unsigned int mt)
