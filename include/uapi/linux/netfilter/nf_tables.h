@@ -826,12 +826,14 @@ enum nft_meta_keys {
  * @NFT_RT_NEXTHOP4: routing nexthop for IPv4
  * @NFT_RT_NEXTHOP6: routing nexthop for IPv6
  * @NFT_RT_TCPMSS: fetch current path tcp mss
+ * @NFT_RT_XFRM: boolean, skb->dst->xfrm != NULL
  */
 enum nft_rt_keys {
 	NFT_RT_CLASSID,
 	NFT_RT_NEXTHOP4,
 	NFT_RT_NEXTHOP6,
 	NFT_RT_TCPMSS,
+	NFT_RT_XFRM,
 	__NFT_RT_MAX
 };
 #define NFT_RT_MAX		(__NFT_RT_MAX - 1)
@@ -1512,6 +1514,35 @@ enum nft_devices_attributes {
 };
 #define NFTA_DEVICE_MAX		(__NFTA_DEVICE_MAX - 1)
 
+/*
+ * enum nft_xfrm_attributes - nf_tables xfrm expr netlink attributes
+ *
+ * @NFTA_XFRM_DREG: destination register (NLA_U32)
+ * @NFTA_XFRM_KEY: enum nft_xfrm_keys (NLA_U32)
+ * @NFTA_XFRM_DIR: direction (NLA_U8)
+ * @NFTA_XFRM_SPNUM: index in secpath array (NLA_U32)
+ */
+enum nft_xfrm_attributes {
+	NFTA_XFRM_UNSPEC,
+	NFTA_XFRM_DREG,
+	NFTA_XFRM_KEY,
+	NFTA_XFRM_DIR,
+	NFTA_XFRM_SPNUM,
+	__NFTA_XFRM_MAX
+};
+#define NFTA_XFRM_MAX (__NFTA_XFRM_MAX - 1)
+
+enum nft_xfrm_keys {
+	NFT_XFRM_KEY_UNSPEC,
+	NFT_XFRM_KEY_DADDR_IP4,
+	NFT_XFRM_KEY_DADDR_IP6,
+	NFT_XFRM_KEY_SADDR_IP4,
+	NFT_XFRM_KEY_SADDR_IP6,
+	NFT_XFRM_KEY_REQID,
+	NFT_XFRM_KEY_SPI,
+	__NFT_XFRM_KEY_MAX,
+};
+#define NFT_XFRM_KEY_MAX (__NFT_XFRM_KEY_MAX - 1)
 
 /**
  * enum nft_trace_attributes - nf_tables trace netlink attributes
