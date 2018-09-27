@@ -69,7 +69,8 @@ void dm_cache_metadata_close(struct dm_cache_metadata *cmd);
  * care about the origin, assuming the core target is giving us valid
  * origin blocks to map to.
  */
-int dm_cache_resize(struct dm_cache_metadata *cmd, dm_cblock_t new_cache_size);
+int dm_cache_resize(struct dm_cache_metadata *cmd, struct dm_cache_policy *policy,
+		    dm_cblock_t new_cache_size);
 int dm_cache_size(struct dm_cache_metadata *cmd, dm_cblock_t *result);
 
 int dm_cache_discard_bitset_resize(struct dm_cache_metadata *cmd,
