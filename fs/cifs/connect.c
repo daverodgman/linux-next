@@ -969,6 +969,9 @@ next_pdu:
 
 		server->lstrp = jiffies;
 
+		if ((num_mids == 0) && (server->ops->is_oplock_break))
+			server->ops->is_oplock_break(bufs[0], server);
+
 		for (i = 0; i < num_mids; i++) {
 			if (mids[i] != NULL) {
 				mids[i]->resp_buf_size = server->pdu_size;
