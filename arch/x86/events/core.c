@@ -1584,7 +1584,7 @@ static void __init pmu_check_apic(void)
 
 }
 
-static struct attribute_group x86_pmu_format_group = {
+static struct attribute_group x86_pmu_format_group __ro_after_init = {
 	.name = "format",
 	.attrs = NULL,
 };
@@ -1715,7 +1715,7 @@ static struct attribute *events_attr[] = {
 	NULL,
 };
 
-static struct attribute_group x86_pmu_events_group = {
+static struct attribute_group x86_pmu_events_group __ro_after_init = {
 	.name = "events",
 	.attrs = events_attr,
 };
@@ -1775,6 +1775,10 @@ static int __init init_hw_perf_events(void)
 		break;
 	case X86_VENDOR_AMD:
 		err = amd_pmu_init();
+		break;
+	case X86_VENDOR_HYGON:
+		err = amd_pmu_init();
+		x86_pmu.name = "HYGON";
 		break;
 	default:
 		err = -ENOTSUPP;
@@ -2230,7 +2234,7 @@ static struct attribute *x86_pmu_attrs[] = {
 	NULL,
 };
 
-static struct attribute_group x86_pmu_attr_group = {
+static struct attribute_group x86_pmu_attr_group __ro_after_init = {
 	.attrs = x86_pmu_attrs,
 };
 
@@ -2248,7 +2252,7 @@ static struct attribute *x86_pmu_caps_attrs[] = {
 	NULL
 };
 
-static struct attribute_group x86_pmu_caps_group = {
+static struct attribute_group x86_pmu_caps_group __ro_after_init = {
 	.name = "caps",
 	.attrs = x86_pmu_caps_attrs,
 };
