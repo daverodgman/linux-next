@@ -214,8 +214,14 @@ struct rvt_driver_provided {
 	void (*schedule_send)(struct rvt_qp *qp);
 	void (*schedule_send_no_lock)(struct rvt_qp *qp);
 
-	/* Driver specific work request checking */
-	int (*check_send_wqe)(struct rvt_qp *qp, struct rvt_swqe *wqe);
+	/*
+	 * Validate the wqe.  This needs to be done prior to inserting the
+	 * wqe into the ring, but after the wqe has been set up.  Allow for
+	 * driver specific work request checking by providing a callback.
+	 * call_send indicates if the wqe should be posted or scheduled.
+	 */
+	int (*check_send_wqe)(struct rvt_qp *qp, struct rvt_swqe *wqe,
+			      bool *call_send);
 
 	/*
 	 * Sometimes rdmavt needs to kick the driver's send progress. That is
@@ -423,7 +429,14 @@ static inline void rvt_set_ibdev_name(struct rvt_dev_info *rdi,
 				      const char *fmt, const char *name,
 				      const int unit)
 {
-	snprintf(rdi->ibdev.name, sizeof(rdi->ibdev.name), fmt, name, unit);
+	/*
+	 * FIXME: rvt and its users want to touch the ibdev before
+	 * registration and have things like the name work. We don't have the
+	 * infrastructure in the core to support this directly today, hack it
+	 * to work by setting the name manually here.
+	 */
+	dev_set_name(&rdi->ibdev.dev, fmt, name, unit);
+	strlcpy(rdi->ibdev.name, dev_name(&rdi->ibdev.dev), IB_DEVICE_NAME_MAX);
 }
 
 /**
@@ -434,7 +447,7 @@ static inline void rvt_set_ibdev_name(struct rvt_dev_info *rdi,
  */
 static inline const char *rvt_get_ibdev_name(const struct rvt_dev_info *rdi)
 {
-	return rdi->ibdev.name;
+	return dev_name(&rdi->ibdev.dev);
 }
 
 static inline struct rvt_pd *ibpd_to_rvtpd(struct ib_pd *ibpd)
