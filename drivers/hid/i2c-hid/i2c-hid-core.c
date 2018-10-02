@@ -43,11 +43,12 @@
 #include <linux/platform_data/i2c-hid.h>
 
 #include "../hid-ids.h"
+#include "i2c-hid.h"
 
 /* quirks to control the device */
 #define I2C_HID_QUIRK_SET_PWR_WAKEUP_DEV	BIT(0)
 #define I2C_HID_QUIRK_NO_IRQ_AFTER_RESET	BIT(1)
-#define I2C_HID_QUIRK_RESEND_REPORT_DESCR	BIT(2)
+#define I2C_HID_QUIRK_NO_RUNTIME_PM		BIT(2)
 
 /* flags */
 #define I2C_HID_STARTED		0
@@ -169,9 +170,8 @@ static const struct i2c_hid_quirks {
 	{ USB_VENDOR_ID_WEIDA, USB_DEVICE_ID_WEIDA_8755,
 		I2C_HID_QUIRK_SET_PWR_WAKEUP_DEV },
 	{ I2C_VENDOR_ID_HANTICK, I2C_PRODUCT_ID_HANTICK_5288,
-		I2C_HID_QUIRK_NO_IRQ_AFTER_RESET },
-	{ USB_VENDOR_ID_SIS_TOUCH, USB_DEVICE_ID_SIS10FB_TOUCH,
-		I2C_HID_QUIRK_RESEND_REPORT_DESCR },
+		I2C_HID_QUIRK_NO_IRQ_AFTER_RESET |
+		I2C_HID_QUIRK_NO_RUNTIME_PM },
 	{ 0, 0 }
 };
 
@@ -669,6 +669,7 @@ static int i2c_hid_parse(struct hid_device *hid)
 	char *rdesc;
 	int ret;
 	int tries = 3;
+	char *use_override;
 
 	i2c_hid_dbg(ihid, "entering %s\n", __func__);
 
@@ -687,26 +688,37 @@ static int i2c_hid_parse(struct hid_device *hid)
 	if (ret)
 		return ret;
 
-	rdesc = kzalloc(rsize, GFP_KERNEL);
+	use_override = i2c_hid_get_dmi_hid_report_desc_override(client->name,
+								&rsize);
 
-	if (!rdesc) {
-		dbg_hid("couldn't allocate rdesc memory\n");
-		return -ENOMEM;
-	}
+	if (use_override) {
+		rdesc = use_override;
+		i2c_hid_dbg(ihid, "Using a HID report descriptor override\n");
+	} else {
+		rdesc = kzalloc(rsize, GFP_KERNEL);
 
-	i2c_hid_dbg(ihid, "asking HID report descriptor\n");
+		if (!rdesc) {
+			dbg_hid("couldn't allocate rdesc memory\n");
+			return -ENOMEM;
+		}
 
-	ret = i2c_hid_command(client, &hid_report_descr_cmd, rdesc, rsize);
-	if (ret) {
-		hid_err(hid, "reading report descriptor failed\n");
-		kfree(rdesc);
-		return -EIO;
+		i2c_hid_dbg(ihid, "asking HID report descriptor\n");
+
+		ret = i2c_hid_command(client, &hid_report_descr_cmd,
+				      rdesc, rsize);
+		if (ret) {
+			hid_err(hid, "reading report descriptor failed\n");
+			kfree(rdesc);
+			return -EIO;
+		}
 	}
 
 	i2c_hid_dbg(ihid, "Report Descriptor: %*ph\n", rsize, rdesc);
 
 	ret = hid_parse_report(hid, rdesc, rsize);
-	kfree(rdesc);
+	if (!use_override)
+		kfree(rdesc);
+
 	if (ret) {
 		dbg_hid("parsing report descriptor failed\n");
 		return ret;
@@ -833,12 +845,19 @@ static int i2c_hid_fetch_hid_descriptor(struct i2c_hid *ihid)
 	int ret;
 
 	/* i2c hid fetch using a fixed descriptor size (30 bytes) */
-	i2c_hid_dbg(ihid, "Fetching the HID descriptor\n");
-	ret = i2c_hid_command(client, &hid_descr_cmd, ihid->hdesc_buffer,
-				sizeof(struct i2c_hid_desc));
-	if (ret) {
-		dev_err(&client->dev, "hid_descr_cmd failed\n");
-		return -ENODEV;
+	if (i2c_hid_get_dmi_i2c_hid_desc_override(client->name)) {
+		i2c_hid_dbg(ihid, "Using a HID descriptor override\n");
+		ihid->hdesc =
+			*i2c_hid_get_dmi_i2c_hid_desc_override(client->name);
+	} else {
+		i2c_hid_dbg(ihid, "Fetching the HID descriptor\n");
+		ret = i2c_hid_command(client, &hid_descr_cmd,
+				      ihid->hdesc_buffer,
+				      sizeof(struct i2c_hid_desc));
+		if (ret) {
+			dev_err(&client->dev, "hid_descr_cmd failed\n");
+			return -ENODEV;
+		}
 	}
 
 	/* Validate the length of HID descriptor, the 4 first bytes:
@@ -1105,7 +1124,9 @@ static int i2c_hid_probe(struct i2c_client *client,
 		goto err_mem_free;
 	}
 
-	pm_runtime_put(&client->dev);
+	if (!(ihid->quirks & I2C_HID_QUIRK_NO_RUNTIME_PM))
+		pm_runtime_put(&client->dev);
+
 	return 0;
 
 err_mem_free:
@@ -1130,7 +1151,8 @@ static int i2c_hid_remove(struct i2c_client *client)
 	struct i2c_hid *ihid = i2c_get_clientdata(client);
 	struct hid_device *hid;
 
-	pm_runtime_get_sync(&client->dev);
+	if (!(ihid->quirks & I2C_HID_QUIRK_NO_RUNTIME_PM))
+		pm_runtime_get_sync(&client->dev);
 	pm_runtime_disable(&client->dev);
 	pm_runtime_set_suspended(&client->dev);
 	pm_runtime_put_noidle(&client->dev);
@@ -1236,21 +1258,12 @@ static int i2c_hid_resume(struct device *dev)
 
 	/* Instead of resetting device, simply powers the device on. This
 	 * solves "incomplete reports" on Raydium devices 2386:3118 and
-	 * 2386:4B33
+	 * 2386:4B33 and fixes various SIS touchscreens no longer sending
+	 * data after a suspend/resume.
 	 */
 	ret = i2c_hid_set_power(client, I2C_HID_PWR_ON);
 	if (ret)
 		return ret;
-
-	/* Some devices need to re-send report descr cmd
-	 * after resume, after this it will be back normal.
-	 * otherwise it issues too many incomplete reports.
-	 */
-	if (ihid->quirks & I2C_HID_QUIRK_RESEND_REPORT_DESCR) {
-		ret = i2c_hid_command(client, &hid_report_descr_cmd, NULL, 0);
-		if (ret)
-			return ret;
-	}
 
 	if (hid->driver && hid->driver->reset_resume) {
 		ret = hid->driver->reset_resume(hid);
