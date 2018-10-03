@@ -540,7 +540,7 @@ static int rtw_is_desired_network(struct adapter *adapter, struct wlan_network *
 /* TODO: Perry: For Power Management */
 void rtw_atimdone_event_callback(struct adapter *adapter, u8 *pbuf)
 {
-	RT_TRACE(_module_rtl871x_mlme_c_, _drv_err_, ("receive atimdone_evet\n"));
+	RT_TRACE(_module_rtl871x_mlme_c_, _drv_err_, ("receive atimdone_event\n"));
 }
 
 void rtw_survey_event_callback(struct adapter	*adapter, u8 *pbuf)
@@ -826,29 +826,6 @@ void rtw_indicate_disconnect(struct adapter *padapter)
 inline void rtw_indicate_scan_done(struct adapter *padapter, bool aborted)
 {
 	rtw_os_indicate_scan_done(padapter, aborted);
-}
-
-void rtw_scan_abort(struct adapter *adapter)
-{
-	unsigned long start;
-	struct mlme_priv	*pmlmepriv = &(adapter->mlmepriv);
-	struct mlme_ext_priv	*pmlmeext = &(adapter->mlmeextpriv);
-
-	start = jiffies;
-	pmlmeext->scan_abort = true;
-	while (check_fwstate(pmlmepriv, _FW_UNDER_SURVEY) &&
-	       jiffies_to_msecs(jiffies - start) <= 200) {
-		if (adapter->bDriverStopped || adapter->bSurpriseRemoved)
-			break;
-		DBG_88E(FUNC_NDEV_FMT"fw_state=_FW_UNDER_SURVEY!\n", FUNC_NDEV_ARG(adapter->pnetdev));
-		msleep(20);
-	}
-	if (check_fwstate(pmlmepriv, _FW_UNDER_SURVEY)) {
-		if (!adapter->bDriverStopped && !adapter->bSurpriseRemoved)
-			DBG_88E(FUNC_NDEV_FMT"waiting for scan_abort time out!\n", FUNC_NDEV_ARG(adapter->pnetdev));
-		rtw_indicate_scan_done(adapter, true);
-	}
-	pmlmeext->scan_abort = false;
 }
 
 static struct sta_info *rtw_joinbss_update_stainfo(struct adapter *padapter, struct wlan_network *pnetwork)
@@ -1437,7 +1414,7 @@ static int rtw_check_join_candidate(struct mlme_priv *pmlmepriv
 	/* check ssid, if needed */
 	if (pmlmepriv->assoc_ssid.SsidLength) {
 		if (competitor->network.Ssid.SsidLength != pmlmepriv->assoc_ssid.SsidLength ||
-		    !memcmp(competitor->network.Ssid.Ssid, pmlmepriv->assoc_ssid.Ssid, pmlmepriv->assoc_ssid.SsidLength) == false)
+		    memcmp(competitor->network.Ssid.Ssid, pmlmepriv->assoc_ssid.Ssid, pmlmepriv->assoc_ssid.SsidLength))
 			goto exit;
 	}
 
@@ -1819,18 +1796,8 @@ void rtw_update_registrypriv_dev_network(struct adapter *adapter)
 	case WIRELESS_11BG_24N:
 		pdev_network->NetworkTypeInUse = Ndis802_11OFDM24;
 		break;
-	case WIRELESS_11A:
-	case WIRELESS_11A_5N:
-		pdev_network->NetworkTypeInUse = Ndis802_11OFDM5;
-		break;
-	case WIRELESS_11ABGN:
-		if (pregistrypriv->channel > 14)
-			pdev_network->NetworkTypeInUse = Ndis802_11OFDM5;
-		else
-			pdev_network->NetworkTypeInUse = Ndis802_11OFDM24;
-		break;
 	default:
-		/*  TODO */
+		pdev_network->NetworkTypeInUse = Ndis802_11OFDM24;
 		break;
 	}
 
