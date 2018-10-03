@@ -1902,7 +1902,7 @@ cma_ib_new_conn_id(const struct rdma_cm_id *listen_id,
 		rt->path_rec[1] = *ib_event->param.req_rcvd.alternate_path;
 
 	if (net_dev) {
-		rdma_copy_addr(&rt->addr.dev_addr, net_dev, NULL);
+		rdma_copy_src_l2_addr(&rt->addr.dev_addr, net_dev);
 	} else {
 		if (!cma_protocol_roce(listen_id) &&
 		    cma_any_addr(cma_src_addr(id_priv))) {
@@ -1952,7 +1952,7 @@ cma_ib_new_udp_id(const struct rdma_cm_id *listen_id,
 		goto err;
 
 	if (net_dev) {
-		rdma_copy_addr(&id->route.addr.dev_addr, net_dev, NULL);
+		rdma_copy_src_l2_addr(&id->route.addr.dev_addr, net_dev);
 	} else {
 		if (!cma_any_addr(cma_src_addr(id_priv))) {
 			ret = cma_translate_addr(cma_src_addr(id_priv),
@@ -2354,8 +2354,8 @@ static void cma_listen_on_dev(struct rdma_id_private *id_priv,
 
 	ret = rdma_listen(id, id_priv->backlog);
 	if (ret)
-		pr_warn("RDMA CMA: cma_listen_on_dev, error %d, listening on device %s\n",
-			ret, cma_dev->device->name);
+		dev_warn(&cma_dev->device->dev,
+			 "RDMA CMA: cma_listen_on_dev, error %d\n", ret);
 }
 
 static void cma_listen_on_all(struct rdma_id_private *id_priv)
@@ -2882,13 +2882,11 @@ static void addr_handler(int status, struct sockaddr *src_addr,
 	if (id_priv->id.event_handler(&id_priv->id, &event)) {
 		cma_exch(id_priv, RDMA_CM_DESTROYING);
 		mutex_unlock(&id_priv->handler_mutex);
-		cma_deref_id(id_priv);
 		rdma_destroy_id(&id_priv->id);
 		return;
 	}
 out:
 	mutex_unlock(&id_priv->handler_mutex);
-	cma_deref_id(id_priv);
 }
 
 static int cma_resolve_loopback(struct rdma_id_private *id_priv)
@@ -2985,16 +2983,16 @@ int rdma_resolve_addr(struct rdma_cm_id *id, struct sockaddr *src_addr,
 		return -EINVAL;
 
 	memcpy(cma_dst_addr(id_priv), dst_addr, rdma_addr_size(dst_addr));
-	atomic_inc(&id_priv->refcount);
 	if (cma_any_addr(dst_addr)) {
 		ret = cma_resolve_loopback(id_priv);
 	} else {
 		if (dst_addr->sa_family == AF_IB) {
 			ret = cma_resolve_ib_addr(id_priv);
 		} else {
-			ret = rdma_resolve_ip(cma_src_addr(id_priv),
-					      dst_addr, &id->route.addr.dev_addr,
-					      timeout_ms, addr_handler, id_priv);
+			ret = rdma_resolve_ip(cma_src_addr(id_priv), dst_addr,
+					      &id->route.addr.dev_addr,
+					      timeout_ms, addr_handler,
+					      false, id_priv);
 		}
 	}
 	if (ret)
@@ -3003,7 +3001,6 @@ int rdma_resolve_addr(struct rdma_cm_id *id, struct sockaddr *src_addr,
 	return 0;
 err:
 	cma_comp_exch(id_priv, RDMA_CM_ADDR_QUERY, RDMA_CM_ADDR_BOUND);
-	cma_deref_id(id_priv);
 	return ret;
 }
 EXPORT_SYMBOL(rdma_resolve_addr);
@@ -4087,9 +4084,10 @@ static int cma_join_ib_multicast(struct rdma_id_private *id_priv,
 	    (!ib_sa_sendonly_fullmem_support(&sa_client,
 					     id_priv->id.device,
 					     id_priv->id.port_num))) {
-		pr_warn("RDMA CM: %s port %u Unable to multicast join\n"
-			"RDMA CM: SM doesn't support Send Only Full Member option\n",
-			id_priv->id.device->name, id_priv->id.port_num);
+		dev_warn(
+			&id_priv->id.device->dev,
+			"RDMA CM: port %u Unable to multicast join: SM doesn't support Send Only Full Member option\n",
+			id_priv->id.port_num);
 		return -EOPNOTSUPP;
 	}
 
