@@ -285,7 +285,6 @@ static int menu_select(struct cpuidle_driver *drv, struct cpuidle_device *dev,
 	struct menu_device *data = this_cpu_ptr(&menu_devices);
 	int latency_req = cpuidle_governor_latency_req(dev->cpu);
 	int i;
-	int first_idx;
 	int idx;
 	unsigned int interactivity_req;
 	unsigned int expected_interval;
@@ -298,17 +297,23 @@ static int menu_select(struct cpuidle_driver *drv, struct cpuidle_device *dev,
 		data->needs_update = 0;
 	}
 
-	/* Special case when user has set very strict latency requirement */
-	if (unlikely(latency_req == 0)) {
-		*stop_tick = false;
-		return 0;
-	}
-
 	/* determine the expected residency time, round up */
 	data->next_timer_us = ktime_to_us(tick_nohz_get_sleep_length(&delta_next));
 
 	get_iowait_load(&nr_iowaiters, &cpu_load);
 	data->bucket = which_bucket(data->next_timer_us, nr_iowaiters);
+
+	if (unlikely(drv->state_count <= 1 || latency_req == 0) ||
+	    ((data->next_timer_us < drv->states[1].target_residency ||
+	      latency_req < drv->states[1].exit_latency) &&
+	     !drv->states[0].disabled && !dev->states_usage[0].disable)) {
+		/*
+		 * In this case state[0] will be used no matter what, so return
+		 * it right away and keep the tick running.
+		 */
+		*stop_tick = false;
+		return 0;
+	}
 
 	/*
 	 * Force the result of multiplication to be 64 bits even if both
@@ -321,22 +326,6 @@ static int menu_select(struct cpuidle_driver *drv, struct cpuidle_device *dev,
 
 	expected_interval = get_typical_interval(data);
 	expected_interval = min(expected_interval, data->next_timer_us);
-
-	first_idx = 0;
-	if (drv->states[0].flags & CPUIDLE_FLAG_POLLING) {
-		struct cpuidle_state *s = &drv->states[1];
-		unsigned int polling_threshold;
-
-		/*
-		 * Default to a physical idle state, not to busy polling, unless
-		 * a timer is going to trigger really really soon.
-		 */
-		polling_threshold = max_t(unsigned int, 20, s->target_residency);
-		if (data->next_timer_us > polling_threshold &&
-		    latency_req > s->exit_latency && !s->disabled &&
-		    !dev->states_usage[1].disable)
-			first_idx = 1;
-	}
 
 	/*
 	 * Use the lowest expected idle interval to pick the idle state.
@@ -369,15 +358,28 @@ static int menu_select(struct cpuidle_driver *drv, struct cpuidle_device *dev,
 	 * our constraints.
 	 */
 	idx = -1;
-	for (i = first_idx; i < drv->state_count; i++) {
+	for (i = 0; i < drv->state_count; i++) {
 		struct cpuidle_state *s = &drv->states[i];
 		struct cpuidle_state_usage *su = &dev->states_usage[i];
 
 		if (s->disabled || su->disable)
 			continue;
+
 		if (idx == -1)
 			idx = i; /* first enabled state */
+
 		if (s->target_residency > predicted_us) {
+			/*
+			 * Use a physical idle state, not busy polling, unless
+			 * a timer is going to trigger really really soon.
+			 */
+			if ((drv->states[idx].flags & CPUIDLE_FLAG_POLLING) &&
+			    i == idx + 1 && latency_req > s->exit_latency &&
+			    data->next_timer_us > max_t(unsigned int, 20,
+							s->target_residency)) {
+				idx = i;
+				break;
+			}
 			if (predicted_us < TICK_USEC)
 				break;
 
@@ -402,7 +404,7 @@ static int menu_select(struct cpuidle_driver *drv, struct cpuidle_device *dev,
 			    s->target_residency <= ktime_to_us(delta_next))
 				idx = i;
 
-			goto out;
+			return idx;
 		}
 		if (s->exit_latency > latency_req) {
 			/*
@@ -449,10 +451,7 @@ static int menu_select(struct cpuidle_driver *drv, struct cpuidle_device *dev,
 		}
 	}
 
-out:
-	data->last_state_idx = idx;
-
-	return data->last_state_idx;
+	return idx;
 }
 
 /**
@@ -511,6 +510,16 @@ static void menu_update(struct cpuidle_driver *drv, struct cpuidle_device *dev)
 		 * duration predictor do a better job next time.
 		 */
 		measured_us = 9 * MAX_INTERESTING / 10;
+	} else if ((drv->states[last_idx].flags & CPUIDLE_FLAG_POLLING) &&
+		   dev->poll_time_limit) {
+		/*
+		 * The CPU exited the "polling" state due to a time limit, so
+		 * the idle duration prediction leading to the selection of that
+		 * state was inaccurate.  If a better prediction had been made,
+		 * the CPU might have been woken up from idle by the next timer.
+		 * Assume that to be the case.
+		 */
+		measured_us = data->next_timer_us;
 	} else {
 		/* measured value */
 		measured_us = dev->last_residency;
