@@ -1040,6 +1040,7 @@ static struct inode *ext4_alloc_inode(struct super_block *sb)
 	ei->i_da_metadata_calc_len = 0;
 	ei->i_da_metadata_calc_last_lblock = 0;
 	spin_lock_init(&(ei->i_block_reservation_lock));
+	ext4_init_pending_tree(&ei->i_pending_tree);
 #ifdef CONFIG_QUOTA
 	ei->i_reserved_quota = 0;
 	memset(&ei->i_dquot, 0, sizeof(ei->i_dquot));
@@ -1577,6 +1578,7 @@ static int clear_qf_name(struct super_block *sb, int qtype)
 {
 
 	struct ext4_sb_info *sbi = EXT4_SB(sb);
+	char *to_free;
 
 	if (sb_any_quota_loaded(sb) &&
 		sbi->s_qf_names[qtype]) {
@@ -1584,8 +1586,11 @@ static int clear_qf_name(struct super_block *sb, int qtype)
 			" when quota turned on");
 		return -1;
 	}
-	kfree(sbi->s_qf_names[qtype]);
-	sbi->s_qf_names[qtype] = NULL;
+	to_free = rcu_dereference_protected(sbi->s_qf_names[qtype],
+					    lockdep_is_held(&sb->s_umount));
+	rcu_assign_pointer(sbi->s_qf_names[qtype], NULL);
+	synchronize_rcu();
+	kfree(to_free);
 	return 1;
 }
 #endif
@@ -2047,11 +2052,15 @@ static inline void ext4_show_quota_options(struct seq_file *seq,
 		seq_printf(seq, ",jqfmt=%s", fmtname);
 	}
 
+	rcu_read_lock();
 	if (sbi->s_qf_names[USRQUOTA])
-		seq_show_option(seq, "usrjquota", sbi->s_qf_names[USRQUOTA]);
+		seq_show_option(seq, "usrjquota",
+				rcu_dereference(sbi->s_qf_names[USRQUOTA]));
 
 	if (sbi->s_qf_names[GRPQUOTA])
-		seq_show_option(seq, "grpjquota", sbi->s_qf_names[GRPQUOTA]);
+		seq_show_option(seq, "grpjquota",
+				rcu_dereference(sbi->s_qf_names[GRPQUOTA]));
+	rcu_read_unlock();
 #endif
 }
 
@@ -5103,6 +5112,7 @@ static int ext4_remount(struct super_block *sb, int *flags, char *data)
 	int err = 0;
 #ifdef CONFIG_QUOTA
 	int i, j;
+	char *to_free[EXT4_MAXQUOTAS];
 #endif
 	char *orig_data = kstrdup(data, GFP_KERNEL);
 
@@ -5352,9 +5362,13 @@ restore_opts:
 #ifdef CONFIG_QUOTA
 	sbi->s_jquota_fmt = old_opts.s_jquota_fmt;
 	for (i = 0; i < EXT4_MAXQUOTAS; i++) {
-		kfree(sbi->s_qf_names[i]);
-		sbi->s_qf_names[i] = old_opts.s_qf_names[i];
+		to_free[i] = rcu_dereference_protected(sbi->s_qf_names[i],
+						       &sb->s_umount);
+		rcu_assign_pointer(sbi->s_qf_names[i], old_opts.s_qf_names[i]);
 	}
+	for (i = 0; i < EXT4_MAXQUOTAS; i++)
+		kfree(to_free[i]);
+	synchronize_rcu();
 #endif
 	kfree(orig_data);
 	return err;
@@ -5954,6 +5968,10 @@ static int __init ext4_init_fs(void)
 	if (err)
 		return err;
 
+	err = ext4_init_pending();
+	if (err)
+		goto out6;
+
 	err = ext4_init_pageio();
 	if (err)
 		goto out5;
@@ -5992,6 +6010,8 @@ out3:
 out4:
 	ext4_exit_pageio();
 out5:
+	ext4_exit_pending();
+out6:
 	ext4_exit_es();
 
 	return err;
@@ -6009,6 +6029,7 @@ static void __exit ext4_exit_fs(void)
 	ext4_exit_system_zone();
 	ext4_exit_pageio();
 	ext4_exit_es();
+	ext4_exit_pending();
 }
 
 MODULE_AUTHOR("Remy Card, Stephen Tweedie, Andrew Morton, Andreas Dilger, Theodore Ts'o and others");
