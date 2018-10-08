@@ -32,7 +32,6 @@
 #include <linux/numa.h>
 #include <linux/nodemask.h>
 #include <linux/topology.h>
-#include <asm/kaslr.h>
 
 static nodemask_t nodes_found_map = NODE_MASK_NONE;
 
@@ -432,6 +431,9 @@ acpi_table_parse_srat(enum acpi_srat_type id,
 					    sizeof(struct acpi_table_srat), id,
 					    handler, max_entries);
 }
+
+/* To be overridden by architectures */
+void __init __weak kaslr_check_padding(void) { }
 
 int __init acpi_numa_init(void)
 {
