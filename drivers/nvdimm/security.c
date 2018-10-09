@@ -129,6 +129,77 @@ int nvdimm_security_get_state(struct nvdimm *nvdimm)
 	return nvdimm->security_ops->state(nvdimm, &nvdimm->state);
 }
 
+int nvdimm_security_erase(struct nvdimm *nvdimm, unsigned int keyid)
+{
+	int rc = 0;
+	struct key *key;
+	struct user_key_payload *payload;
+	struct device *dev = &nvdimm->dev;
+	bool is_userkey = false;
+
+	if (!nvdimm->security_ops)
+		return -EOPNOTSUPP;
+
+	nvdimm_bus_lock(dev);
+	mutex_lock(&nvdimm->key_mutex);
+	if (atomic_read(&nvdimm->busy)) {
+		dev_warn(dev, "Unable to secure erase while DIMM active.\n");
+		rc = -EBUSY;
+		goto out;
+	}
+
+	if (dev_get_drvdata(dev)) {
+		dev_warn(dev, "Unable to secure erase while DIMM enabled.\n");
+		rc = -EBUSY;
+		goto out;
+	}
+
+	if (nvdimm->state == NVDIMM_SECURITY_UNSUPPORTED) {
+		dev_warn(dev, "Attempt to secure erase in wrong state.\n");
+		rc = -EOPNOTSUPP;
+		goto out;
+	}
+
+	/* look for a key from cached key if exists */
+	key = nvdimm_get_and_verify_key(nvdimm, keyid);
+	if (IS_ERR(key)) {
+		dev_dbg(dev, "Unable to get and verify key\n");
+		rc = PTR_ERR(key);
+		goto out;
+	}
+	if (!key) {
+		dev_dbg(dev, "No cached key found\n");
+		/* get old user key */
+		key = nvdimm_lookup_user_key(dev, keyid);
+		if (!key) {
+			dev_dbg(dev, "Unable to retrieve user key: %#x\n",
+					keyid);
+			rc = -ENOKEY;
+			goto out;
+		}
+		is_userkey = true;
+	}
+
+	down_read(&key->sem);
+	payload = key->payload.data[0];
+	rc = nvdimm->security_ops->erase(nvdimm,
+			(const struct nvdimm_key_data *)payload->data);
+	up_read(&key->sem);
+
+	/* remove key since secure erase kills the passphrase */
+	if (!is_userkey) {
+		key_invalidate(key);
+		nvdimm->key = NULL;
+	}
+	key_put(key);
+
+ out:
+	mutex_unlock(&nvdimm->key_mutex);
+	nvdimm_bus_unlock(dev);
+	nvdimm_security_get_state(nvdimm);
+	return rc;
+}
+
 int nvdimm_security_freeze_lock(struct nvdimm *nvdimm)
 {
 	int rc;
