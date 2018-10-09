@@ -419,6 +419,11 @@ static ssize_t security_store(struct device *dev,
 			return -EINVAL;
 		dev_dbg(dev, "update %#x %#x\n", old_key, new_key);
 		rc = nvdimm_security_change_key(nvdimm, old_key, new_key);
+	} else if (sysfs_streq(cmd, "disable")) {
+		if (rc != 2)
+			return -EINVAL;
+		dev_dbg(dev, "disable %#x\n", old_key);
+		rc = nvdimm_security_disable(nvdimm, old_key);
 	} else
 		return -EINVAL;
 
