@@ -129,6 +129,24 @@ int nvdimm_security_get_state(struct nvdimm *nvdimm)
 	return nvdimm->security_ops->state(nvdimm, &nvdimm->state);
 }
 
+int nvdimm_security_freeze_lock(struct nvdimm *nvdimm)
+{
+	int rc;
+
+	if (!nvdimm->security_ops)
+		return -EOPNOTSUPP;
+
+	if (nvdimm->state == NVDIMM_SECURITY_UNSUPPORTED)
+		return -EOPNOTSUPP;
+
+	rc = nvdimm->security_ops->freeze_lock(nvdimm);
+	if (rc < 0)
+		return rc;
+
+	nvdimm_security_get_state(nvdimm);
+	return 0;
+}
+
 int nvdimm_security_disable(struct nvdimm *nvdimm, unsigned int keyid)
 {
 	int rc;

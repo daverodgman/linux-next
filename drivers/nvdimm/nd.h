@@ -433,6 +433,7 @@ int nvdimm_security_get_state(struct nvdimm *nvdimm);
 int nvdimm_security_change_key(struct nvdimm *nvdimm, unsigned int old_keyid,
 		unsigned int new_keyid);
 int nvdimm_security_disable(struct nvdimm *nvdimm, unsigned int keyid);
+int nvdimm_security_freeze_lock(struct nvdimm *nvdimm);
 #else
 static inline int nvdimm_security_unlock_dimm(struct nvdimm *nvdimm)
 {
@@ -456,6 +457,11 @@ static inline int nvdimm_security_change_key(struct nvdimm *nvdimm,
 
 static inline int nvdimm_security_disable(struct nvdimm *nvdimm,
 		unsigned int keyid)
+{
+	return -EOPNOTSUPP;
+}
+
+static inline int nvdimm_security_freeze_lock(struct nvdimm *nvdimm)
 {
 	return -EOPNOTSUPP;
 }
