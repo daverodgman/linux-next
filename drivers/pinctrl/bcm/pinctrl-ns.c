@@ -20,7 +20,7 @@
 
 struct ns_pinctrl {
 	struct device *dev;
-	unsigned int chipset_flag;
+	uintptr_t chipset_flag;
 	struct pinctrl_dev *pctldev;
 	void __iomem *base;
 
