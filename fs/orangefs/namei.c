@@ -60,12 +60,16 @@ static int orangefs_create(struct inode *dir,
 	ref = new_op->downcall.resp.create.refn;
 	op_release(new_op);
 
-	inode = orangefs_new_inode(dir->i_sb, dir, S_IFREG | mode, 0, &ref);
-	if (IS_ERR(inode)) {
+
+	inode = new_inode(dir->i_sb);
+	if (!inode)
+		return -ENOMEM;
+	ret = orangefs_new_inode(inode, dir->i_sb, dir, S_IFREG | mode, 0,
+	    &ref);
+	if (ret) {
 		gossip_err("%s: Failed to allocate inode for file :%pd:\n",
 			   __func__,
 			   dentry);
-		ret = PTR_ERR(inode);
 		goto out;
 	}
 
@@ -271,11 +275,14 @@ static int orangefs_symlink(struct inode *dir,
 	ref = new_op->downcall.resp.sym.refn;
 	op_release(new_op);
 
-	inode = orangefs_new_inode(dir->i_sb, dir, S_IFLNK | mode, 0, &ref);
-	if (IS_ERR(inode)) {
+	inode = new_inode(dir->i_sb);
+	if (!inode)
+		return -ENOMEM;
+	ret = orangefs_new_inode(inode, dir->i_sb, dir, S_IFLNK | mode, 0,
+	    &ref);
+	if (ret) {
 		gossip_err
 		    ("*** Failed to allocate orangefs symlink inode\n");
-		ret = PTR_ERR(inode);
 		goto out;
 	}
 	/*
@@ -348,10 +355,13 @@ static int orangefs_mkdir(struct inode *dir, struct dentry *dentry, umode_t mode
 	ref = new_op->downcall.resp.mkdir.refn;
 	op_release(new_op);
 
-	inode = orangefs_new_inode(dir->i_sb, dir, S_IFDIR | mode, 0, &ref);
-	if (IS_ERR(inode)) {
+	inode = new_inode(dir->i_sb);
+	if (!inode)
+		return -ENOMEM;
+	ret = orangefs_new_inode(inode, dir->i_sb, dir, S_IFDIR | mode, 0,
+	    &ref);
+	if (ret) {
 		gossip_err("*** Failed to allocate orangefs dir inode\n");
-		ret = PTR_ERR(inode);
 		goto out;
 	}
 
