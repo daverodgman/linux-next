@@ -23,6 +23,7 @@
 
 static int nvdimm_probe(struct device *dev)
 {
+	struct nvdimm *nvdimm = to_nvdimm(dev);
 	struct nvdimm_drvdata *ndd;
 	int rc;
 
@@ -50,6 +51,13 @@ static int nvdimm_probe(struct device *dev)
 	ndd->dev = dev;
 	get_device(dev);
 	kref_init(&ndd->kref);
+
+	nvdimm_security_get_state(nvdimm);
+
+	/* unlock DIMM here before touch label */
+	rc = nvdimm_security_unlock_dimm(nvdimm);
+	if (rc < 0)
+		dev_warn(dev, "failed to unlock dimm %s\n", dev_name(dev));
 
 	/*
 	 * EACCES failures reading the namespace label-area-properties
@@ -104,6 +112,9 @@ static int nvdimm_probe(struct device *dev)
 static int nvdimm_remove(struct device *dev)
 {
 	struct nvdimm_drvdata *ndd = dev_get_drvdata(dev);
+	struct nvdimm *nvdimm = to_nvdimm(dev);
+
+	nvdimm_security_release(nvdimm);
 
 	if (!ndd)
 		return 0;

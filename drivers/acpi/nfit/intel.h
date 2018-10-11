@@ -8,6 +8,8 @@
 
 #ifdef CONFIG_X86
 
+extern const struct nvdimm_security_ops *intel_security_ops;
+
 #define ND_INTEL_STATUS_SIZE		4
 #define ND_INTEL_PASSPHRASE_SIZE	32
 
@@ -62,6 +64,8 @@ struct nd_intel_overwrite {
 struct nd_intel_query_overwrite {
 	u32 status;
 } __packed;
+#else /* CONFIG_X86 */
+#define intel_security_ops (NULL)
 #endif /* CONFIG_X86 */
 
 #endif

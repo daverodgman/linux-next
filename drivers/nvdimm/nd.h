@@ -425,4 +425,24 @@ static inline bool is_bad_pmem(struct badblocks *bb, sector_t sector,
 resource_size_t nd_namespace_blk_validate(struct nd_namespace_blk *nsblk);
 const u8 *nd_dev_to_uuid(struct device *dev);
 bool pmem_should_map_pages(struct device *dev);
+
+#ifdef CONFIG_NVDIMM_SECURITY
+int nvdimm_security_unlock_dimm(struct nvdimm *nvdimm);
+void nvdimm_security_release(struct nvdimm *nvdimm);
+int nvdimm_security_get_state(struct nvdimm *nvdimm);
+#else
+static inline int nvdimm_security_unlock_dimm(struct nvdimm *nvdimm)
+{
+	return 0;
+}
+
+static inline void nvdimm_security_release(struct nvdimm *nvdimm)
+{
+}
+
+static inline int nvdimm_security_get_state(struct nvdimm *nvdimm)
+{
+	return -EOPNOTSUPP;
+}
+#endif
 #endif /* __ND_H__ */
