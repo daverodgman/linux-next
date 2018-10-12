@@ -251,7 +251,7 @@ int nvdimm_security_disable(struct nvdimm *nvdimm, unsigned int keyid)
 			(const struct nvdimm_key_data *)payload->data);
 	up_read(&key->sem);
 	if (rc < 0) {
-		dev_warn(dev, "unlock failed\n");
+		dev_warn(dev, "security disable failed\n");
 		goto out;
 	}
 
