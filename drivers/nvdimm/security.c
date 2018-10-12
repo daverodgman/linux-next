@@ -245,6 +245,42 @@ int nvdimm_security_disable(struct nvdimm *nvdimm, unsigned int keyid)
 	return rc;
 }
 
+static int nvdimm_self_verify_key(struct nvdimm *nvdimm)
+{
+	struct key *key;
+	struct user_key_payload *payload;
+	void *data;
+	int rc;
+
+	lockdep_assert_held(&nvdimm->key_mutex);
+
+	key = nvdimm_request_key(nvdimm);
+	if (!key)
+		return -ENOKEY;
+
+	if (key->datalen != NVDIMM_PASSPHRASE_LEN) {
+		key_put(key);
+		return -EINVAL;
+	}
+
+	down_read(&key->sem);
+	payload = key->payload.data[0];
+	data = payload->data;
+
+	/*
+	 * We send the same key to the hardware as new and old key to
+	 * verify that the key is good.
+	 */
+	rc = nvdimm->security_ops->change_key(nvdimm, data, data);
+	if (rc < 0) {
+		key_put(key);
+		return rc;
+	}
+	up_read(&key->sem);
+	nvdimm->key = key;
+	return 0;
+}
+
 int nvdimm_security_unlock_dimm(struct nvdimm *nvdimm)
 {
 	struct key *key;
@@ -255,12 +291,27 @@ int nvdimm_security_unlock_dimm(struct nvdimm *nvdimm)
 	if (!nvdimm->security_ops)
 		return 0;
 
-	if (nvdimm->state == NVDIMM_SECURITY_UNLOCKED ||
-			nvdimm->state == NVDIMM_SECURITY_UNSUPPORTED ||
+	if (nvdimm->state == NVDIMM_SECURITY_UNSUPPORTED ||
 			nvdimm->state == NVDIMM_SECURITY_DISABLED)
 		return 0;
 
 	mutex_lock(&nvdimm->key_mutex);
+	/*
+	 * If the pre-OS has unlocked the DIMM, we will attempt to send
+	 * the key from request_key() to the hardware for verification.
+	 * If we are not able to verify the key against the hardware we
+	 * will freeze the security configuration. This will prevent any
+	 * other security operations.
+	 */
+	if (nvdimm->state == NVDIMM_SECURITY_UNLOCKED) {
+		rc = nvdimm_self_verify_key(nvdimm);
+		if (rc < 0) {
+			rc = nvdimm_security_freeze_lock(nvdimm);
+			mutex_unlock(&nvdimm->key_mutex);
+			return rc;
+		}
+	}
+
 	key = nvdimm->key;
 	if (!key) {
 		key = nvdimm_request_key(nvdimm);
