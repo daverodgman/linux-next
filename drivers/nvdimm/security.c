@@ -122,6 +122,12 @@ struct key *nvdimm_get_and_verify_key(struct nvdimm *nvdimm,
 	return key;
 }
 
+static void key_destroy(struct key *key)
+{
+	key_invalidate(key);
+	key_put(key);
+}
+
 int nvdimm_security_get_state(struct nvdimm *nvdimm)
 {
 	if (!nvdimm->security_ops)
@@ -136,7 +142,6 @@ int nvdimm_security_erase(struct nvdimm *nvdimm, unsigned int keyid)
 	struct key *key;
 	struct user_key_payload *payload;
 	struct device *dev = &nvdimm->dev;
-	bool is_userkey = false;
 
 	if (!nvdimm->security_ops)
 		return -EOPNOTSUPP;
@@ -162,18 +167,6 @@ int nvdimm_security_erase(struct nvdimm *nvdimm, unsigned int keyid)
 		rc = PTR_ERR(key);
 		goto out;
 	}
-	if (!key) {
-		dev_dbg(dev, "No cached key found\n");
-		/* get old user key */
-		key = nvdimm_lookup_user_key(dev, keyid);
-		if (!key) {
-			dev_dbg(dev, "Unable to retrieve user key: %#x\n",
-					keyid);
-			rc = -ENOKEY;
-			goto out;
-		}
-		is_userkey = true;
-	}
 
 	down_read(&key->sem);
 	payload = key->payload.data[0];
@@ -182,11 +175,8 @@ int nvdimm_security_erase(struct nvdimm *nvdimm, unsigned int keyid)
 	up_read(&key->sem);
 
 	/* remove key since secure erase kills the passphrase */
-	if (!is_userkey) {
-		key_invalidate(key);
-		nvdimm->key = NULL;
-	}
-	key_put(key);
+	key_destroy(key);
+	nvdimm->key = NULL;
 
  out:
 	mutex_unlock(&nvdimm->key_mutex);
@@ -219,7 +209,6 @@ int nvdimm_security_disable(struct nvdimm *nvdimm, unsigned int keyid)
 	struct key *key;
 	struct user_key_payload *payload;
 	struct device *dev = &nvdimm->dev;
-	bool is_userkey = false;
 
 	if (!nvdimm->security_ops)
 		return -EOPNOTSUPP;
@@ -234,15 +223,6 @@ int nvdimm_security_disable(struct nvdimm *nvdimm, unsigned int keyid)
 		mutex_unlock(&nvdimm->key_mutex);
 		return PTR_ERR(key);
 	}
-	if (!key) {
-		/* get old user key */
-		key = nvdimm_lookup_user_key(dev, keyid);
-		if (!key) {
-			mutex_unlock(&nvdimm->key_mutex);
-			return -ENOKEY;
-		}
-		is_userkey = true;
-	}
 
 	down_read(&key->sem);
 	payload = key->payload.data[0];
@@ -256,11 +236,8 @@ int nvdimm_security_disable(struct nvdimm *nvdimm, unsigned int keyid)
 	}
 
 	/* If we succeed then remove the key */
-	if (!is_userkey) {
-		key_invalidate(key);
-		nvdimm->key = NULL;
-	}
-	key_put(key);
+	key_destroy(key);
+	nvdimm->key = NULL;
 
  out:
 	mutex_unlock(&nvdimm->key_mutex);
@@ -328,12 +305,6 @@ void nvdimm_security_release(struct nvdimm *nvdimm)
 	key_put(nvdimm->key);
 	nvdimm->key = NULL;
 	mutex_unlock(&nvdimm->key_mutex);
-}
-
-static void key_destroy(struct key *key)
-{
-	key_invalidate(key);
-	key_put(key);
 }
 
 int nvdimm_security_change_key(struct nvdimm *nvdimm,
