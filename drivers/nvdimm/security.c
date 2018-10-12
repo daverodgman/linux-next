@@ -148,12 +148,6 @@ int nvdimm_security_erase(struct nvdimm *nvdimm, unsigned int keyid)
 		goto out;
 	}
 
-	if (dev_get_drvdata(dev)) {
-		dev_warn(dev, "Unable to secure erase while DIMM enabled.\n");
-		rc = -EBUSY;
-		goto out;
-	}
-
 	if (nvdimm->state == NVDIMM_SECURITY_UNSUPPORTED) {
 		dev_warn(dev, "Attempt to secure erase in wrong state.\n");
 		rc = -EOPNOTSUPP;
