@@ -432,6 +432,9 @@ acpi_table_parse_srat(enum acpi_srat_type id,
 					    handler, max_entries);
 }
 
+/* To be overridden by architectures */
+void __init __weak kaslr_check_padding(void) { }
+
 int __init acpi_numa_init(void)
 {
 	int cnt = 0;
@@ -463,6 +466,10 @@ int __init acpi_numa_init(void)
 
 		cnt = acpi_table_parse_srat(ACPI_SRAT_TYPE_MEMORY_AFFINITY,
 					    acpi_parse_memory_affinity, 0);
+
+		if (parsed_numa_memblks)
+			kaslr_check_padding();
+
 	}
 
 	/* SLIT: System Locality Information Table */
