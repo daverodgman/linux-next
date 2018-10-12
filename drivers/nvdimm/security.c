@@ -27,7 +27,8 @@ static struct key *make_kernel_key(struct key *key)
 
 	new_key = key_alloc(&key_type_logon, key->description,
 			GLOBAL_ROOT_UID, GLOBAL_ROOT_GID, current_cred(),
-			KEY_POS_SEARCH, KEY_ALLOC_NOT_IN_QUOTA, NULL);
+			KEY_POS_ALL & ~KEY_POS_SETATTR,
+			KEY_ALLOC_NOT_IN_QUOTA, NULL);
 	if (IS_ERR(new_key))
 		return NULL;
 
@@ -413,11 +414,23 @@ int nvdimm_security_change_key(struct nvdimm *nvdimm,
 		dev_warn(dev, "key update failed: %d\n", rc);
 
 	if (old_key) {
-		/* copy new payload to old payload */
-		if (rc == 0)
-			key_update(make_key_ref(old_key, 1), new_data,
-					old_key->datalen);
 		up_read(&old_key->sem);
+		/*
+		 * With the key update done via hardware, we no longer need
+		 * the old payload and need to replace it with the new
+		 * payload. key_update() will acquire write sem of the
+		 * old key and update with new data.
+		 */
+		if (rc == 0) {
+			rc = key_update(make_key_ref(old_key, 1), new_data,
+					old_key->datalen);
+			if (rc < 0) {
+				dev_warn(dev,
+					"kernel key update failed: %d\n", rc);
+				key_destroy(old_key);
+				nvdimm->key = NULL;
+			}
+		}
 	}
 	up_read(&key->sem);
 
