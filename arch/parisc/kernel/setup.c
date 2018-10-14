@@ -40,6 +40,7 @@
 #include <linux/sched/clock.h>
 #include <linux/start_kernel.h>
 
+#include <asm/alternative.h>
 #include <asm/processor.h>
 #include <asm/sections.h>
 #include <asm/pdc.h>
@@ -305,6 +306,55 @@ static int __init parisc_init_resources(void)
 	return 0;
 }
 
+static int __init apply_alternatives_all(void)
+{
+	struct alt_instr *entry;
+	int *from, len;
+	int ret = 0, replacement;
+
+	/* replace only when not running SMP CPUs */
+	if (num_online_cpus() > 1)
+		return 0;
+
+	pr_info("alternatives: patching kernel code\n");
+
+	set_kernel_text_rw(1);
+
+	entry = (struct alt_instr *) &__alt_instructions;
+	while (entry < (struct alt_instr *) &__alt_instructions_end) {
+		from = (int *)((ulong)&entry->orig_offset + entry->orig_offset);
+		len = entry->len;
+
+		replacement = entry->replacement;
+
+		/* Want to replace pdtlb by a pdtlb,l instruction? */
+		if (replacement == INSN_PxTLB) {
+			replacement = *from;
+			if (boot_cpu_data.cpu_type >= pcxu) /* >= pa2.0 ? */
+				replacement |= (1 << 10); /* set el bit */
+		}
+
+		/*
+		 * Replace instruction with NOPs?
+		 * For long distance insert a branch instruction instead.
+		 */
+		if (replacement == INSN_NOP && len > 1)
+			replacement = 0xe8000002 + (len-2)*8; /* "b,n .+8" */
+
+		pr_debug("Replace %02d instructions @ 0x%px with 0x%08x\n",
+			len, from, replacement);
+
+		/* Replace instructions */
+		*from = replacement;
+
+		entry++;
+	}
+
+	set_kernel_text_rw(0);
+
+	return ret;
+}
+
 extern void gsc_init(void);
 extern void processor_init(void);
 extern void ccio_init(void);
@@ -346,6 +396,7 @@ static int __init parisc_init(void)
 			boot_cpu_data.cpu_hz / 1000000,
 			boot_cpu_data.cpu_hz % 1000000	);
 
+	apply_alternatives_all();
 	parisc_setup_cache_timing();
 
 	/* These are in a non-obvious order, will fix when we have an iotree */

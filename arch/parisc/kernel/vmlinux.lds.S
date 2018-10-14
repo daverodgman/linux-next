@@ -25,7 +25,7 @@
 #include <asm/page.h>
 #include <asm/asm-offsets.h>
 #include <asm/thread_info.h>
-	
+
 /* ld script to make hppa Linux kernel */
 #ifndef CONFIG_64BIT
 OUTPUT_FORMAT("elf32-hppa-linux")
@@ -61,6 +61,12 @@ SECTIONS
 		EXIT_DATA
 	}
 	PERCPU_SECTION(8)
+	. = ALIGN(4);
+	.altinstructions : {
+		__alt_instructions = .;
+		*(.altinstructions)
+		__alt_instructions_end = .;
+	}
 	. = ALIGN(HUGEPAGE_SIZE);
 	__init_end = .;
 	/* freed after init ends here */

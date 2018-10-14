@@ -28,6 +28,7 @@
 #include <asm/processor.h>
 #include <asm/sections.h>
 #include <asm/shmparam.h>
+#include <asm/alternative.h>
 
 int split_tlb __read_mostly;
 int dcache_stride __read_mostly;
@@ -483,7 +484,7 @@ int __flush_tlb_range(unsigned long sid, unsigned long start,
 		while (start < end) {
 			purge_tlb_start(flags);
 			mtsp(sid, 1);
-			pdtlb(start);
+			pdtlb_alt(start);
 			purge_tlb_end(flags);
 			start += PAGE_SIZE;
 		}
@@ -494,8 +495,8 @@ int __flush_tlb_range(unsigned long sid, unsigned long start,
 	while (start < end) {
 		purge_tlb_start(flags);
 		mtsp(sid, 1);
-		pdtlb(start);
-		pitlb(start);
+		pdtlb_alt(start);
+		pitlb_alt(start);
 		purge_tlb_end(flags);
 		start += PAGE_SIZE;
 	}
