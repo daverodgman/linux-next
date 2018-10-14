@@ -1991,6 +1991,9 @@ void dev_queue_xmit_nit(struct sk_buff *skb, struct net_device *dev)
 	rcu_read_lock();
 again:
 	list_for_each_entry_rcu(ptype, ptype_list, list) {
+		if (ptype->ignore_outgoing)
+			continue;
+
 		/* Never send packets back to the socket
 		 * they originated from - MvS (miquels@drinkel.ow.org)
 		 */
@@ -3250,7 +3253,7 @@ struct sk_buff *dev_hard_start_xmit(struct sk_buff *first, struct net_device *de
 	while (skb) {
 		struct sk_buff *next = skb->next;
 
-		skb->next = NULL;
+		skb_mark_not_on_list(skb);
 		rc = xmit_one(skb, dev, txq, next != NULL);
 		if (unlikely(!dev_xmit_complete(rc))) {
 			skb->next = next;
@@ -3350,7 +3353,7 @@ struct sk_buff *validate_xmit_skb_list(struct sk_buff *skb, struct net_device *d
 
 	for (; skb != NULL; skb = next) {
 		next = skb->next;
-		skb->next = NULL;
+		skb_mark_not_on_list(skb);
 
 		/* in case skb wont be segmented, point to itself */
 		skb->prev = skb;
@@ -5314,8 +5317,7 @@ static void __napi_gro_flush_chain(struct napi_struct *napi, u32 index,
 	list_for_each_entry_safe_reverse(skb, p, head, list) {
 		if (flush_old && NAPI_GRO_CB(skb)->age == jiffies)
 			return;
-		list_del(&skb->list);
-		skb->next = NULL;
+		skb_list_del_init(skb);
 		napi_gro_complete(skb);
 		napi->gro_hash[index].count--;
 	}
@@ -5500,8 +5502,7 @@ static enum gro_result dev_gro_receive(struct napi_struct *napi, struct sk_buff 
 	ret = NAPI_GRO_CB(skb)->free ? GRO_MERGED_FREE : GRO_MERGED;
 
 	if (pp) {
-		list_del(&pp->list);
-		pp->next = NULL;
+		skb_list_del_init(pp);
 		napi_gro_complete(pp);
 		napi->gro_hash[hash].count--;
 	}
