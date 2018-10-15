@@ -431,11 +431,10 @@ struct inode *orangefs_iget(struct super_block *sb,
 /*
  * Allocate an inode for a newly created file and insert it into the inode hash.
  */
-struct inode *orangefs_new_inode(struct super_block *sb, struct inode *dir,
-		int mode, dev_t dev, struct orangefs_object_kref *ref)
+int orangefs_new_inode(struct inode *inode, struct super_block *sb,
+    struct inode *dir, int mode, dev_t dev, struct orangefs_object_kref *ref)
 {
 	unsigned long hash = orangefs_handle_hash(ref);
-	struct inode *inode;
 	int error;
 
 	gossip_debug(GOSSIP_INODE_DEBUG,
@@ -445,10 +444,6 @@ struct inode *orangefs_new_inode(struct super_block *sb, struct inode *dir,
 		     MAJOR(dev),
 		     MINOR(dev),
 		     mode);
-
-	inode = new_inode(sb);
-	if (!inode)
-		return NULL;
 
 	orangefs_set_inode(inode, ref);
 	inode->i_ino = hash;	/* needed for stat etc */
@@ -474,9 +469,9 @@ struct inode *orangefs_new_inode(struct super_block *sb, struct inode *dir,
 		     "Initializing ACL's for inode %pU\n",
 		     get_khandle_from_ino(inode));
 	orangefs_init_acl(inode, dir);
-	return inode;
+	return 0;
 
 out_iput:
 	iput(inode);
-	return ERR_PTR(error);
+	return error;
 }
