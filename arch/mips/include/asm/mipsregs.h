@@ -2287,7 +2287,7 @@ do {									\
 	_write_32bit_cp1_register(dest, val, )
 #endif
 
-#ifdef HAVE_AS_DSP
+#ifdef TOOLCHAIN_SUPPORTS_DSP
 #define rddsp(mask)							\
 ({									\
 	unsigned int __dspctl;						\
