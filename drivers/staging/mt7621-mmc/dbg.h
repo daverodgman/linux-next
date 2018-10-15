@@ -91,58 +91,8 @@ enum msdc_dbg {
 
 extern unsigned int sd_debug_zone[4];
 #define TAG "msdc"
-#if 0 /* +++ chhung */
-#define BUG_ON(x) \
-do { \
-	if (x) { \
-		printk("[BUG] %s LINE:%d FILE:%s\n", #x, __LINE__, __FILE__); \
-		while (1)						\
-			;						\
-	} \
-} while (0)
-#endif /* end of +++ */
-
-#define N_MSG(evt, fmt, args...)
-/*
-do {    \
-    if ((DBG_EVT_##evt) & sd_debug_zone[host->id]) { \
-        printk(KERN_ERR TAG"%d -> "fmt" <- %s() : L<%d> PID<%s><0x%x>\n", \
-            host->id,  ##args , __FUNCTION__, __LINE__, current->comm, current->pid);	\
-    } \
-} while(0)
-*/
-
-#define ERR_MSG(fmt, args...) \
-do { \
-	printk(KERN_ERR TAG"%d -> "fmt" <- %s() : L<%d> PID<%s><0x%x>\n", \
-	       host->id,  ##args, __FUNCTION__, __LINE__, current->comm, current->pid); \
-} while (0);
-
-#if 1
-//defined CONFIG_MTK_MMC_CD_POLL
-#define INIT_MSG(fmt, args...)
-#define IRQ_MSG(fmt, args...)
-#else
-#define INIT_MSG(fmt, args...) \
-do { \
-	printk(KERN_ERR TAG"%d -> "fmt" <- %s() : L<%d> PID<%s><0x%x>\n", \
-	       host->id,  ##args, __FUNCTION__, __LINE__, current->comm, current->pid); \
-} while (0);
-
-/* PID in ISR in not corrent */
-#define IRQ_MSG(fmt, args...) \
-do { \
-	printk(KERN_ERR TAG"%d -> "fmt" <- %s() : L<%d>\n",	\
-	       host->id,  ##args, __FUNCTION__, __LINE__);	\
-} while (0);
-#endif
-
 void msdc_debug_proc_init(void);
 
-#if 0 /* --- chhung */
-void msdc_init_gpt(void);
-extern void GPT_GetCounter64(UINT32 *cntL32, UINT32 *cntH32);
-#endif /* end of --- */
 u32 msdc_time_calc(u32 old_L32, u32 old_H32, u32 new_L32, u32 new_H32);
 void msdc_performance(u32 opcode, u32 sizes, u32 bRx, u32 ticks);
 
