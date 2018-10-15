@@ -18,6 +18,7 @@
 #include <linux/io.h>
 #include <linux/fs.h>
 #include <linux/mm.h>
+#include <linux/key.h>
 #include "nd-core.h"
 #include "label.h"
 #include "pmem.h"
@@ -85,56 +86,48 @@ int nvdimm_init_nsarea(struct nvdimm_drvdata *ndd)
 	return cmd_rc;
 }
 
-int nvdimm_init_config_data(struct nvdimm_drvdata *ndd)
+int nvdimm_get_config_data(struct nvdimm_drvdata *ndd, void *buf,
+			   size_t offset, size_t len)
 {
 	struct nvdimm_bus *nvdimm_bus = walk_to_nvdimm_bus(ndd->dev);
+	struct nvdimm_bus_descriptor *nd_desc = nvdimm_bus->nd_desc;
 	int rc = validate_dimm(ndd), cmd_rc = 0;
 	struct nd_cmd_get_config_data_hdr *cmd;
-	struct nvdimm_bus_descriptor *nd_desc;
-	u32 max_cmd_size, config_size;
-	size_t offset;
+	size_t max_cmd_size, buf_offset;
 
 	if (rc)
 		return rc;
 
-	if (ndd->data)
-		return 0;
-
-	if (ndd->nsarea.status || ndd->nsarea.max_xfer == 0
-			|| ndd->nsarea.config_size < ND_LABEL_MIN_SIZE) {
-		dev_dbg(ndd->dev, "failed to init config data area: (%d:%d)\n",
-				ndd->nsarea.max_xfer, ndd->nsarea.config_size);
+	if (offset + len > ndd->nsarea.config_size)
 		return -ENXIO;
-	}
 
-	ndd->data = kvmalloc(ndd->nsarea.config_size, GFP_KERNEL);
-	if (!ndd->data)
-		return -ENOMEM;
-
-	max_cmd_size = min_t(u32, PAGE_SIZE, ndd->nsarea.max_xfer);
-	cmd = kzalloc(max_cmd_size + sizeof(*cmd), GFP_KERNEL);
+	max_cmd_size = min_t(u32, len, ndd->nsarea.max_xfer);
+	cmd = kvzalloc(max_cmd_size + sizeof(*cmd), GFP_KERNEL);
 	if (!cmd)
 		return -ENOMEM;
 
-	nd_desc = nvdimm_bus->nd_desc;
-	for (config_size = ndd->nsarea.config_size, offset = 0;
-			config_size; config_size -= cmd->in_length,
-			offset += cmd->in_length) {
-		cmd->in_length = min(config_size, max_cmd_size);
-		cmd->in_offset = offset;
+	for (buf_offset = 0; len;
+	     len -= cmd->in_length, buf_offset += cmd->in_length) {
+		size_t cmd_size;
+
+		cmd->in_offset = offset + buf_offset;
+		cmd->in_length = min(max_cmd_size, len);
+
+		cmd_size = sizeof(*cmd) + cmd->in_length;
+
 		rc = nd_desc->ndctl(nd_desc, to_nvdimm(ndd->dev),
-				ND_CMD_GET_CONFIG_DATA, cmd,
-				cmd->in_length + sizeof(*cmd), &cmd_rc);
+				ND_CMD_GET_CONFIG_DATA, cmd, cmd_size, &cmd_rc);
 		if (rc < 0)
 			break;
 		if (cmd_rc < 0) {
 			rc = cmd_rc;
 			break;
 		}
-		memcpy(ndd->data + offset, cmd->out_buf, cmd->in_length);
+
+		/* out_buf should be valid, copy it into our output buffer */
+		memcpy(buf + buf_offset, cmd->out_buf, cmd->in_length);
 	}
-	dev_dbg(ndd->dev, "len: %zu rc: %d\n", offset, rc);
-	kfree(cmd);
+	kvfree(cmd);
 
 	return rc;
 }
@@ -151,15 +144,11 @@ int nvdimm_set_config_data(struct nvdimm_drvdata *ndd, size_t offset,
 	if (rc)
 		return rc;
 
-	if (!ndd->data)
-		return -ENXIO;
-
 	if (offset + len > ndd->nsarea.config_size)
 		return -ENXIO;
 
-	max_cmd_size = min_t(u32, PAGE_SIZE, len);
-	max_cmd_size = min_t(u32, max_cmd_size, ndd->nsarea.max_xfer);
-	cmd = kzalloc(max_cmd_size + sizeof(*cmd) + sizeof(u32), GFP_KERNEL);
+	max_cmd_size = min_t(u32, len, ndd->nsarea.max_xfer);
+	cmd = kvzalloc(max_cmd_size + sizeof(*cmd) + sizeof(u32), GFP_KERNEL);
 	if (!cmd)
 		return -ENOMEM;
 
@@ -183,7 +172,7 @@ int nvdimm_set_config_data(struct nvdimm_drvdata *ndd, size_t offset,
 			break;
 		}
 	}
-	kfree(cmd);
+	kvfree(cmd);
 
 	return rc;
 }
@@ -382,11 +371,86 @@ static ssize_t available_slots_show(struct device *dev,
 }
 static DEVICE_ATTR_RO(available_slots);
 
+#ifdef CONFIG_NVDIMM_SECURITY
+__weak ssize_t security_show(struct device *dev,
+		struct device_attribute *attr, char *buf)
+{
+	struct nvdimm *nvdimm = to_nvdimm(dev);
+
+	switch (nvdimm->state) {
+	case NVDIMM_SECURITY_DISABLED:
+		return sprintf(buf, "disabled\n");
+	case NVDIMM_SECURITY_UNLOCKED:
+		return sprintf(buf, "unlocked\n");
+	case NVDIMM_SECURITY_LOCKED:
+		return sprintf(buf, "locked\n");
+	case NVDIMM_SECURITY_FROZEN:
+		return sprintf(buf, "frozen\n");
+	case NVDIMM_SECURITY_UNSUPPORTED:
+	default:
+		return sprintf(buf, "unsupported\n");
+	}
+
+	return -ENOTTY;
+}
+
+#define SEC_CMD_SIZE 128
+static ssize_t security_store(struct device *dev,
+		struct device_attribute *attr, const char *buf, size_t len)
+
+{
+	struct nvdimm *nvdimm = to_nvdimm(dev);
+	struct nvdimm_bus *nvdimm_bus = walk_to_nvdimm_bus(dev);
+	ssize_t rc = -EINVAL;
+	unsigned int new_key = 0, old_key = 0;
+	char cmd[SEC_CMD_SIZE+1];
+
+	if (len > SEC_CMD_SIZE)
+		return -EINVAL;
+
+	wait_nvdimm_bus_probe_idle(&nvdimm_bus->dev);
+	if (atomic_read(&nvdimm->busy))
+		return -EBUSY;
+
+	rc = sscanf(buf, "%"__stringify(SEC_CMD_SIZE)"s %u %u",
+			cmd, &old_key, &new_key);
+	if (sysfs_streq(cmd, "update"))	{
+		if (rc != 3)
+			return -EINVAL;
+		dev_dbg(dev, "update %#x %#x\n", old_key, new_key);
+		rc = nvdimm_security_change_key(nvdimm, old_key, new_key);
+	} else if (sysfs_streq(cmd, "disable")) {
+		if (rc != 2)
+			return -EINVAL;
+		dev_dbg(dev, "disable %#x\n", old_key);
+		rc = nvdimm_security_disable(nvdimm, old_key);
+	} else if (sysfs_streq(buf, "freeze")) {
+		dev_dbg(dev, "freeze\n");
+		rc = nvdimm_security_freeze_lock(nvdimm);
+	} else if (sysfs_streq(cmd, "erase")) {
+		if (rc != 2)
+			return -EINVAL;
+		dev_dbg(dev, "erase %#x\n", old_key);
+		rc = nvdimm_security_erase(nvdimm, old_key);
+	} else
+		return -EINVAL;
+
+	if (rc == 0)
+		rc = len;
+
+	return rc;
+}
+static DEVICE_ATTR_RW(security);
+#endif
+
 static struct attribute *nvdimm_attributes[] = {
 	&dev_attr_state.attr,
 	&dev_attr_flags.attr,
 	&dev_attr_commands.attr,
 	&dev_attr_available_slots.attr,
+#ifdef CONFIG_NVDIMM_SECURITY
+	&dev_attr_security.attr,
+#endif
 	NULL,
 };
 
@@ -395,10 +459,11 @@ struct attribute_group nvdimm_attribute_group = {
 };
 EXPORT_SYMBOL_GPL(nvdimm_attribute_group);
 
-struct nvdimm *nvdimm_create(struct nvdimm_bus *nvdimm_bus, void *provider_data,
+struct nvdimm *__nvdimm_create(struct nvdimm_bus *nvdimm_bus, void *provider_data,
 		const struct attribute_group **groups, unsigned long flags,
 		unsigned long cmd_mask, int num_flush,
-		struct resource *flush_wpq)
+		struct resource *flush_wpq, const char *dimm_id,
+		const struct nvdimm_security_ops *sec_ops)
 {
 	struct nvdimm *nvdimm = kzalloc(sizeof(*nvdimm), GFP_KERNEL);
 	struct device *dev;
@@ -411,12 +476,16 @@ struct nvdimm *nvdimm_create(struct nvdimm_bus *nvdimm_bus, void *provider_data,
 		kfree(nvdimm);
 		return NULL;
 	}
+
+	nvdimm->dimm_id = dimm_id;
+	nvdimm->security_ops = sec_ops;
 	nvdimm->provider_data = provider_data;
 	nvdimm->flags = flags;
 	nvdimm->cmd_mask = cmd_mask;
 	nvdimm->num_flush = num_flush;
 	nvdimm->flush_wpq = flush_wpq;
 	atomic_set(&nvdimm->busy, 0);
+	mutex_init(&nvdimm->key_mutex);
 	dev = &nvdimm->dev;
 	dev_set_name(dev, "nmem%d", nvdimm->id);
 	dev->parent = &nvdimm_bus->dev;
@@ -427,7 +496,7 @@ struct nvdimm *nvdimm_create(struct nvdimm_bus *nvdimm_bus, void *provider_data,
 
 	return nvdimm;
 }
-EXPORT_SYMBOL_GPL(nvdimm_create);
+EXPORT_SYMBOL_GPL(__nvdimm_create);
 
 int alias_dpa_busy(struct device *dev, void *data)
 {
