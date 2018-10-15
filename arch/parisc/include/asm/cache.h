@@ -43,6 +43,10 @@ void parisc_setup_cache_timing(void);
 
 #define pdtlb(addr)         asm volatile("pdtlb 0(%%sr1,%0)" : : "r" (addr));
 #define pitlb(addr)         asm volatile("pitlb 0(%%sr1,%0)" : : "r" (addr));
+#define pdtlb_alt(addr)	asm volatile("pdtlb 0(%%sr1,%0)" \
+				ALTERNATIVE(INSN_PxTLB) : : "r" (addr))
+#define pitlb_alt(addr)	asm volatile("pitlb 0(%%sr1,%0)" \
+				ALTERNATIVE(INSN_PxTLB) : : "r" (addr))
 #define pdtlb_kernel(addr)  asm volatile("pdtlb 0(%0)" : : "r" (addr));
 
 #endif /* ! __ASSEMBLY__ */
