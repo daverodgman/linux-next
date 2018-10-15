@@ -1223,7 +1223,7 @@ static int mpls_netconf_get_devconf(struct sk_buff *in_skb,
 	int err;
 
 	err = nlmsg_parse(nlh, sizeof(*ncm), tb, NETCONFA_MAX,
-			  devconf_mpls_policy, NULL);
+			  devconf_mpls_policy, extack);
 	if (err < 0)
 		goto errout;
 
@@ -1263,12 +1263,28 @@ errout:
 static int mpls_netconf_dump_devconf(struct sk_buff *skb,
 				     struct netlink_callback *cb)
 {
+	const struct nlmsghdr *nlh = cb->nlh;
 	struct net *net = sock_net(skb->sk);
 	struct hlist_head *head;
 	struct net_device *dev;
 	struct mpls_dev *mdev;
 	int idx, s_idx;
 	int h, s_h;
+
+	if (cb->strict_check) {
+		struct netlink_ext_ack *extack = cb->extack;
+		struct netconfmsg *ncm;
+
+		if (nlh->nlmsg_len < nlmsg_msg_size(sizeof(*ncm))) {
+			NL_SET_ERR_MSG_MOD(extack, "Invalid header for netconf dump request");
+			return -EINVAL;
+		}
+
+		if (nlmsg_attrlen(nlh, sizeof(*ncm))) {
+			NL_SET_ERR_MSG_MOD(extack, "Invalid data after header in netconf dump request");
+			return -EINVAL;
+		}
+	}
 
 	s_h = cb->args[0];
 	s_idx = idx = cb->args[1];
@@ -1286,7 +1302,7 @@ static int mpls_netconf_dump_devconf(struct sk_buff *skb,
 				goto cont;
 			if (mpls_netconf_fill_devconf(skb, mdev,
 						      NETLINK_CB(cb->skb).portid,
-						      cb->nlh->nlmsg_seq,
+						      nlh->nlmsg_seq,
 						      RTM_NEWNETCONF,
 						      NLM_F_MULTI,
 						      NETCONFA_ALL) < 0) {
@@ -2015,14 +2031,56 @@ nla_put_failure:
 	return -EMSGSIZE;
 }
 
+#if IS_ENABLED(CONFIG_INET)
+static int mpls_valid_fib_dump_req(const struct nlmsghdr *nlh,
+				   struct netlink_ext_ack *extack)
+{
+	return ip_valid_fib_dump_req(nlh, extack);
+}
+#else
+static int mpls_valid_fib_dump_req(const struct nlmsghdr *nlh,
+				   struct netlink_ext_ack *extack)
+{
+	struct rtmsg *rtm;
+
+	if (nlh->nlmsg_len < nlmsg_msg_size(sizeof(*rtm))) {
+		NL_SET_ERR_MSG_MOD(extack, "Invalid header for FIB dump request");
+		return -EINVAL;
+	}
+
+	rtm = nlmsg_data(nlh);
+	if (rtm->rtm_dst_len || rtm->rtm_src_len  || rtm->rtm_tos   ||
+	    rtm->rtm_table   || rtm->rtm_protocol || rtm->rtm_scope ||
+	    rtm->rtm_type    || rtm->rtm_flags) {
+		NL_SET_ERR_MSG_MOD(extack, "Invalid values in header for FIB dump request");
+		return -EINVAL;
+	}
+
+	if (nlmsg_attrlen(nlh, sizeof(*rtm))) {
+		NL_SET_ERR_MSG_MOD(extack, "Invalid data after header in FIB dump request");
+		return -EINVAL;
+	}
+
+	return 0;
+}
+#endif
+
 static int mpls_dump_routes(struct sk_buff *skb, struct netlink_callback *cb)
 {
+	const struct nlmsghdr *nlh = cb->nlh;
 	struct net *net = sock_net(skb->sk);
 	struct mpls_route __rcu **platform_label;
 	size_t platform_labels;
 	unsigned int index;
 
 	ASSERT_RTNL();
+
+	if (cb->strict_check) {
+		int err = mpls_valid_fib_dump_req(nlh, cb->extack);
+
+		if (err < 0)
+			return err;
+	}
 
 	index = cb->args[0];
 	if (index < MPLS_LABEL_FIRST_UNRESERVED)
