@@ -24,6 +24,7 @@
 #include <linux/nd.h>
 #include <asm/cacheflush.h>
 #include <acpi/nfit.h>
+#include "intel.h"
 #include "nfit.h"
 
 /*
@@ -191,18 +192,20 @@ static int xlat_nvdimm_status(struct nvdimm *nvdimm, void *buf, unsigned int cmd
 		 * In the _LSI, _LSR, _LSW case the locked status is
 		 * communicated via the read/write commands
 		 */
-		if (nfit_mem->has_lsr)
+		if (test_bit(NFIT_MEM_LSR, &nfit_mem->flags))
 			break;
 
 		if (status >> 16 & ND_CONFIG_LOCKED)
 			return -EACCES;
 		break;
 	case ND_CMD_GET_CONFIG_DATA:
-		if (nfit_mem->has_lsr && status == ACPI_LABELS_LOCKED)
+		if (test_bit(NFIT_MEM_LSR, &nfit_mem->flags)
+				&& status == ACPI_LABELS_LOCKED)
 			return -EACCES;
 		break;
 	case ND_CMD_SET_CONFIG_DATA:
-		if (nfit_mem->has_lsw && status == ACPI_LABELS_LOCKED)
+		if (test_bit(NFIT_MEM_LSW, &nfit_mem->flags)
+				&& status == ACPI_LABELS_LOCKED)
 			return -EACCES;
 		break;
 	default:
@@ -377,6 +380,14 @@ static u8 nfit_dsm_revid(unsigned family, unsigned func)
 			[NVDIMM_INTEL_QUERY_FWUPDATE] = 2,
 			[NVDIMM_INTEL_SET_THRESHOLD] = 2,
 			[NVDIMM_INTEL_INJECT_ERROR] = 2,
+			[NVDIMM_INTEL_GET_SECURITY_STATE] = 2,
+			[NVDIMM_INTEL_SET_PASSPHRASE] = 2,
+			[NVDIMM_INTEL_DISABLE_PASSPHRASE] = 2,
+			[NVDIMM_INTEL_UNLOCK_UNIT] = 2,
+			[NVDIMM_INTEL_FREEZE_LOCK] = 2,
+			[NVDIMM_INTEL_SECURE_ERASE] = 2,
+			[NVDIMM_INTEL_OVERWRITE] = 2,
+			[NVDIMM_INTEL_QUERY_OVERWRITE] = 2,
 		},
 	};
 	u8 id;
@@ -480,14 +491,16 @@ int acpi_nfit_ctl(struct nvdimm_bus_descriptor *nd_desc, struct nvdimm *nvdimm,
 			min_t(u32, 256, in_buf.buffer.length), true);
 
 	/* call the BIOS, prefer the named methods over _DSM if available */
-	if (nvdimm && cmd == ND_CMD_GET_CONFIG_SIZE && nfit_mem->has_lsr)
+	if (nvdimm && cmd == ND_CMD_GET_CONFIG_SIZE
+			&& test_bit(NFIT_MEM_LSR, &nfit_mem->flags))
 		out_obj = acpi_label_info(handle);
-	else if (nvdimm && cmd == ND_CMD_GET_CONFIG_DATA && nfit_mem->has_lsr) {
+	else if (nvdimm && cmd == ND_CMD_GET_CONFIG_DATA
+			&& test_bit(NFIT_MEM_LSR, &nfit_mem->flags)) {
 		struct nd_cmd_get_config_data_hdr *p = buf;
 
 		out_obj = acpi_label_read(handle, p->in_offset, p->in_length);
 	} else if (nvdimm && cmd == ND_CMD_SET_CONFIG_DATA
-			&& nfit_mem->has_lsw) {
+			&& test_bit(NFIT_MEM_LSW, &nfit_mem->flags)) {
 		struct nd_cmd_set_config_hdr *p = buf;
 
 		out_obj = acpi_label_write(handle, p->in_offset, p->in_length,
@@ -1547,7 +1560,12 @@ static DEVICE_ATTR_RO(dsm_mask);
 static ssize_t flags_show(struct device *dev,
 		struct device_attribute *attr, char *buf)
 {
-	u16 flags = to_nfit_memdev(dev)->flags;
+	struct nvdimm *nvdimm = to_nvdimm(dev);
+	struct nfit_mem *nfit_mem = nvdimm_provider_data(nvdimm);
+	u16 flags = __to_nfit_memdev(nfit_mem)->flags;
+
+	if (test_bit(NFIT_MEM_DIRTY, &nfit_mem->flags))
+		flags |= ACPI_NFIT_MEM_FLUSH_FAILED;
 
 	return sprintf(buf, "%s%s%s%s%s%s%s\n",
 		flags & ACPI_NFIT_MEM_SAVE_FAILED ? "save_fail " : "",
@@ -1563,20 +1581,22 @@ static DEVICE_ATTR_RO(flags);
 static ssize_t id_show(struct device *dev,
 		struct device_attribute *attr, char *buf)
 {
-	struct acpi_nfit_control_region *dcr = to_nfit_dcr(dev);
+	struct nvdimm *nvdimm = to_nvdimm(dev);
+	struct nfit_mem *nfit_mem = nvdimm_provider_data(nvdimm);
 
-	if (dcr->valid_fields & ACPI_NFIT_CONTROL_MFG_INFO_VALID)
-		return sprintf(buf, "%04x-%02x-%04x-%08x\n",
-				be16_to_cpu(dcr->vendor_id),
-				dcr->manufacturing_location,
-				be16_to_cpu(dcr->manufacturing_date),
-				be32_to_cpu(dcr->serial_number));
-	else
-		return sprintf(buf, "%04x-%08x\n",
-				be16_to_cpu(dcr->vendor_id),
-				be32_to_cpu(dcr->serial_number));
+	return sprintf(buf, "%s\n", nfit_mem->id);
 }
 static DEVICE_ATTR_RO(id);
+
+static ssize_t dirty_shutdown_show(struct device *dev,
+		struct device_attribute *attr, char *buf)
+{
+	struct nvdimm *nvdimm = to_nvdimm(dev);
+	struct nfit_mem *nfit_mem = nvdimm_provider_data(nvdimm);
+
+	return sprintf(buf, "%d\n", nfit_mem->dirty_shutdown);
+}
+static DEVICE_ATTR_RO(dirty_shutdown);
 
 static struct attribute *acpi_nfit_dimm_attributes[] = {
 	&dev_attr_handle.attr,
@@ -1595,6 +1615,7 @@ static struct attribute *acpi_nfit_dimm_attributes[] = {
 	&dev_attr_id.attr,
 	&dev_attr_family.attr,
 	&dev_attr_dsm_mask.attr,
+	&dev_attr_dirty_shutdown.attr,
 	NULL,
 };
 
@@ -1603,6 +1624,7 @@ static umode_t acpi_nfit_dimm_attr_visible(struct kobject *kobj,
 {
 	struct device *dev = container_of(kobj, struct device, kobj);
 	struct nvdimm *nvdimm = to_nvdimm(dev);
+	struct nfit_mem *nfit_mem = nvdimm_provider_data(nvdimm);
 
 	if (!to_nfit_dcr(dev)) {
 		/* Without a dcr only the memdev attributes can be surfaced */
@@ -1616,6 +1638,11 @@ static umode_t acpi_nfit_dimm_attr_visible(struct kobject *kobj,
 
 	if (a == &dev_attr_format1.attr && num_nvdimm_formats(nvdimm) <= 1)
 		return 0;
+
+	if (!test_bit(NFIT_MEM_DIRTY_COUNT, &nfit_mem->flags)
+			&& a == &dev_attr_dirty_shutdown.attr)
+		return 0;
+
 	return a->mode;
 }
 
@@ -1694,6 +1721,56 @@ static bool acpi_nvdimm_has_method(struct acpi_device *adev, char *method)
 	return false;
 }
 
+__weak void nfit_intel_shutdown_status(struct nfit_mem *nfit_mem)
+{
+	struct nd_intel_smart smart = { 0 };
+	union acpi_object in_buf = {
+		.type = ACPI_TYPE_BUFFER,
+		.buffer.pointer = (char *) &smart,
+		.buffer.length = sizeof(smart),
+	};
+	union acpi_object in_obj = {
+		.type = ACPI_TYPE_PACKAGE,
+		.package.count = 1,
+		.package.elements = &in_buf,
+	};
+	const u8 func = ND_INTEL_SMART;
+	const guid_t *guid = to_nfit_uuid(nfit_mem->family);
+	u8 revid = nfit_dsm_revid(nfit_mem->family, func);
+	struct acpi_device *adev = nfit_mem->adev;
+	acpi_handle handle = adev->handle;
+	union acpi_object *out_obj;
+
+	if ((nfit_mem->dsm_mask & (1 << func)) == 0)
+		return;
+
+	out_obj = acpi_evaluate_dsm(handle, guid, revid, func, &in_obj);
+	if (!out_obj)
+		return;
+
+	if (smart.flags & ND_INTEL_SMART_SHUTDOWN_VALID) {
+		if (smart.shutdown_state)
+			set_bit(NFIT_MEM_DIRTY, &nfit_mem->flags);
+	}
+
+	if (smart.flags & ND_INTEL_SMART_SHUTDOWN_COUNT_VALID) {
+		set_bit(NFIT_MEM_DIRTY_COUNT, &nfit_mem->flags);
+		nfit_mem->dirty_shutdown = smart.shutdown_count;
+	}
+	ACPI_FREE(out_obj);
+}
+
+static void populate_shutdown_status(struct nfit_mem *nfit_mem)
+{
+	/*
+	 * For DIMMs that provide a dynamic facility to retrieve a
+	 * dirty-shutdown status and/or a dirty-shutdown count, cache
+	 * these values in nfit_mem.
+	 */
+	if (nfit_mem->family == NVDIMM_FAMILY_INTEL)
+		nfit_intel_shutdown_status(nfit_mem);
+}
+
 static int acpi_nfit_add_dimm(struct acpi_nfit_desc *acpi_desc,
 		struct nfit_mem *nfit_mem, u32 device_handle)
 {
@@ -1703,13 +1780,28 @@ static int acpi_nfit_add_dimm(struct acpi_nfit_desc *acpi_desc,
 	const guid_t *guid;
 	int i;
 	int family = -1;
+	struct acpi_nfit_control_region *dcr = nfit_mem->dcr;
+
+	if (dcr->valid_fields & ACPI_NFIT_CONTROL_MFG_INFO_VALID)
+		sprintf(nfit_mem->id, "%04x-%02x-%04x-%08x",
+				be16_to_cpu(dcr->vendor_id),
+				dcr->manufacturing_location,
+				be16_to_cpu(dcr->manufacturing_date),
+				be32_to_cpu(dcr->serial_number));
+	else
+		sprintf(nfit_mem->id, "%04x-%08x",
+				be16_to_cpu(dcr->vendor_id),
+				be32_to_cpu(dcr->serial_number));
 
 	/* nfit test assumes 1:1 relationship between commands and dsms */
 	nfit_mem->dsm_mask = acpi_desc->dimm_cmd_force_en;
 	nfit_mem->family = NVDIMM_FAMILY_INTEL;
 	adev = to_acpi_dev(acpi_desc);
-	if (!adev)
+	if (!adev) {
+		/* unit test case */
+		populate_shutdown_status(nfit_mem);
 		return 0;
+	}
 
 	adev_dimm = acpi_find_child_device(adev, device_handle, false);
 	nfit_mem->adev = adev_dimm;
@@ -1784,13 +1876,16 @@ static int acpi_nfit_add_dimm(struct acpi_nfit_desc *acpi_desc,
 	if (acpi_nvdimm_has_method(adev_dimm, "_LSI")
 			&& acpi_nvdimm_has_method(adev_dimm, "_LSR")) {
 		dev_dbg(dev, "%s: has _LSR\n", dev_name(&adev_dimm->dev));
-		nfit_mem->has_lsr = true;
+		set_bit(NFIT_MEM_LSR, &nfit_mem->flags);
 	}
 
-	if (nfit_mem->has_lsr && acpi_nvdimm_has_method(adev_dimm, "_LSW")) {
+	if (test_bit(NFIT_MEM_LSR, &nfit_mem->flags)
+			&& acpi_nvdimm_has_method(adev_dimm, "_LSW")) {
 		dev_dbg(dev, "%s: has _LSW\n", dev_name(&adev_dimm->dev));
-		nfit_mem->has_lsw = true;
+		set_bit(NFIT_MEM_LSW, &nfit_mem->flags);
 	}
+
+	populate_shutdown_status(nfit_mem);
 
 	return 0;
 }
@@ -1819,6 +1914,16 @@ static void shutdown_dimm_notify(void *data)
 		}
 	}
 	mutex_unlock(&acpi_desc->init_mutex);
+}
+
+static const struct nvdimm_security_ops *acpi_nfit_get_security_ops(int family)
+{
+	switch (family) {
+	case NVDIMM_FAMILY_INTEL:
+		return intel_security_ops;
+	default:
+		return NULL;
+	}
 }
 
 static int acpi_nfit_register_dimms(struct acpi_nfit_desc *acpi_desc)
@@ -1878,19 +1983,20 @@ static int acpi_nfit_register_dimms(struct acpi_nfit_desc *acpi_desc)
 			cmd_mask |= nfit_mem->dsm_mask & NVDIMM_STANDARD_CMDMASK;
 		}
 
-		if (nfit_mem->has_lsr) {
+		if (test_bit(NFIT_MEM_LSR, &nfit_mem->flags)) {
 			set_bit(ND_CMD_GET_CONFIG_SIZE, &cmd_mask);
 			set_bit(ND_CMD_GET_CONFIG_DATA, &cmd_mask);
 		}
-		if (nfit_mem->has_lsw)
+		if (test_bit(NFIT_MEM_LSW, &nfit_mem->flags))
 			set_bit(ND_CMD_SET_CONFIG_DATA, &cmd_mask);
 
 		flush = nfit_mem->nfit_flush ? nfit_mem->nfit_flush->flush
 			: NULL;
-		nvdimm = nvdimm_create(acpi_desc->nvdimm_bus, nfit_mem,
+		nvdimm = __nvdimm_create(acpi_desc->nvdimm_bus, nfit_mem,
 				acpi_nfit_dimm_attribute_groups,
 				flags, cmd_mask, flush ? flush->hint_count : 0,
-				nfit_mem->flush_wpq);
+				nfit_mem->flush_wpq, &nfit_mem->id[0],
+				acpi_nfit_get_security_ops(nfit_mem->family));
 		if (!nvdimm)
 			return -ENOMEM;
 
@@ -3229,7 +3335,7 @@ static int acpi_nfit_flush_probe(struct nvdimm_bus_descriptor *nd_desc)
 	return 0;
 }
 
-static int acpi_nfit_clear_to_send(struct nvdimm_bus_descriptor *nd_desc,
+static int __acpi_nfit_clear_to_send(struct nvdimm_bus_descriptor *nd_desc,
 		struct nvdimm *nvdimm, unsigned int cmd)
 {
 	struct acpi_nfit_desc *acpi_desc = to_acpi_nfit_desc(nd_desc);
@@ -3249,6 +3355,23 @@ static int acpi_nfit_clear_to_send(struct nvdimm_bus_descriptor *nd_desc,
 		return -EBUSY;
 
 	return 0;
+}
+
+/* prevent security commands from being issued via ioctl */
+static int acpi_nfit_clear_to_send(struct nvdimm_bus_descriptor *nd_desc,
+		struct nvdimm *nvdimm, unsigned int cmd, void *buf)
+{
+	struct nd_cmd_pkg *call_pkg = buf;
+	unsigned int func;
+
+	if (nvdimm && cmd == ND_CMD_CALL &&
+			call_pkg->nd_family == NVDIMM_FAMILY_INTEL) {
+		func = call_pkg->nd_command;
+		if ((1 << func) & NVDIMM_INTEL_SECURITY_CMDMASK)
+			return -EOPNOTSUPP;
+	}
+
+	return __acpi_nfit_clear_to_send(nd_desc, nvdimm, cmd);
 }
 
 int acpi_nfit_ars_rescan(struct acpi_nfit_desc *acpi_desc, unsigned long flags)
