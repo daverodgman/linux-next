@@ -329,11 +329,8 @@ void fsid_key_table_finalize(void);
 /*
  * defined in inode.c
  */
-struct inode *orangefs_new_inode(struct super_block *sb,
-			      struct inode *dir,
-			      int mode,
-			      dev_t dev,
-			      struct orangefs_object_kref *ref);
+int orangefs_new_inode(struct inode *, struct super_block *, struct inode *,
+    int, dev_t, struct orangefs_object_kref *);
 
 int orangefs_setattr(struct dentry *dentry, struct iattr *iattr);
 
