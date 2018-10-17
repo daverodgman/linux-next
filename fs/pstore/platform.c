@@ -780,6 +780,19 @@ void __init pstore_choose_compression(void)
 	}
 }
 
+static int __init pstore_compression_late_init(void)
+{
+	/*
+	 * Check if any pstore backends registered earlier but did not allocate
+	 * for compression because crypto was not ready, if so then initialize
+	 * compression.
+	 */
+	if (psinfo && !tfm)
+		allocate_buf_for_compression();
+	return 0;
+}
+late_initcall(pstore_compression_late_init);
+
 module_param(compress, charp, 0444);
 MODULE_PARM_DESC(compress, "Pstore compression to use");
 
