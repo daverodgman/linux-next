@@ -23,6 +23,7 @@
 
 static int nvdimm_probe(struct device *dev)
 {
+	struct nvdimm *nvdimm = to_nvdimm(dev);
 	struct nvdimm_drvdata *ndd;
 	int rc;
 
@@ -51,6 +52,13 @@ static int nvdimm_probe(struct device *dev)
 	get_device(dev);
 	kref_init(&ndd->kref);
 
+	nvdimm_security_get_state(nvdimm);
+
+	/* unlock DIMM here before touch label */
+	rc = nvdimm_security_unlock_dimm(nvdimm);
+	if (rc < 0)
+		dev_warn(dev, "failed to unlock dimm %s\n", dev_name(dev));
+
 	/*
 	 * EACCES failures reading the namespace label-area-properties
 	 * are interpreted as the DIMM capacity being locked but the
@@ -75,7 +83,7 @@ static int nvdimm_probe(struct device *dev)
 	 * DIMM capacity. We fail the dimm probe to prevent regions from
 	 * attempting to parse the label area.
 	 */
-	rc = nvdimm_init_config_data(ndd);
+	rc = nd_label_data_init(ndd);
 	if (rc == -EACCES)
 		nvdimm_set_locked(dev);
 	if (rc)
@@ -84,10 +92,6 @@ static int nvdimm_probe(struct device *dev)
 	dev_dbg(dev, "config data size: %d\n", ndd->nsarea.config_size);
 
 	nvdimm_bus_lock(dev);
-	ndd->ns_current = nd_label_validate(ndd);
-	ndd->ns_next = nd_label_next_nsindex(ndd->ns_current);
-	nd_label_copy(ndd, to_next_namespace_index(ndd),
-			to_current_namespace_index(ndd));
 	if (ndd->ns_current >= 0) {
 		rc = nd_label_reserve_dpa(ndd);
 		if (rc == 0)
@@ -108,6 +112,9 @@ static int nvdimm_probe(struct device *dev)
 static int nvdimm_remove(struct device *dev)
 {
 	struct nvdimm_drvdata *ndd = dev_get_drvdata(dev);
+	struct nvdimm *nvdimm = to_nvdimm(dev);
+
+	nvdimm_security_release(nvdimm);
 
 	if (!ndd)
 		return 0;
