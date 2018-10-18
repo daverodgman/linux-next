@@ -241,6 +241,8 @@ struct nvdimm_drvdata *to_ndd(struct nd_mapping *nd_mapping);
 int nvdimm_check_config_data(struct device *dev);
 int nvdimm_init_nsarea(struct nvdimm_drvdata *ndd);
 int nvdimm_init_config_data(struct nvdimm_drvdata *ndd);
+int nvdimm_get_config_data(struct nvdimm_drvdata *ndd, void *buf,
+			   size_t offset, size_t len);
 int nvdimm_set_config_data(struct nvdimm_drvdata *ndd, size_t offset,
 		void *buf, size_t len);
 long nvdimm_clear_poison(struct device *dev, phys_addr_t phys,
@@ -423,4 +425,52 @@ static inline bool is_bad_pmem(struct badblocks *bb, sector_t sector,
 resource_size_t nd_namespace_blk_validate(struct nd_namespace_blk *nsblk);
 const u8 *nd_dev_to_uuid(struct device *dev);
 bool pmem_should_map_pages(struct device *dev);
+
+#ifdef CONFIG_NVDIMM_SECURITY
+int nvdimm_security_unlock_dimm(struct nvdimm *nvdimm);
+void nvdimm_security_release(struct nvdimm *nvdimm);
+int nvdimm_security_get_state(struct nvdimm *nvdimm);
+int nvdimm_security_change_key(struct nvdimm *nvdimm, unsigned int old_keyid,
+		unsigned int new_keyid);
+int nvdimm_security_disable(struct nvdimm *nvdimm, unsigned int keyid);
+int nvdimm_security_freeze_lock(struct nvdimm *nvdimm);
+int nvdimm_security_erase(struct nvdimm *nvdimm, unsigned int keyid);
+#else
+static inline int nvdimm_security_unlock_dimm(struct nvdimm *nvdimm)
+{
+	return 0;
+}
+
+static inline void nvdimm_security_release(struct nvdimm *nvdimm)
+{
+}
+
+static inline int nvdimm_security_get_state(struct nvdimm *nvdimm)
+{
+	return -EOPNOTSUPP;
+}
+
+static inline int nvdimm_security_change_key(struct nvdimm *nvdimm,
+		unsigned int old_keyid, unsigned int new_keyid)
+{
+	return -EOPNOTSUPP;
+}
+
+static inline int nvdimm_security_disable(struct nvdimm *nvdimm,
+		unsigned int keyid)
+{
+	return -EOPNOTSUPP;
+}
+
+static inline int nvdimm_security_freeze_lock(struct nvdimm *nvdimm)
+{
+	return -EOPNOTSUPP;
+}
+
+static inline int nvdimm_security_erase(struct nvdimm *nvdimm,
+		unsigned int keyid)
+{
+	return -EOPNOTSUPP;
+}
+#endif
 #endif /* __ND_H__ */
