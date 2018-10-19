@@ -1710,18 +1710,23 @@ Cpuset Interface Files
 
   cpuset.sched.partition
 	A read-write single value file which exists on non-root
-	cpuset-enabled cgroups.  It accepts either "0" (off) or "1"
-	(on) when written to.  This flag is set and owned by the
+	cpuset-enabled cgroups.  This file is set and owned by the
 	parent cgroup.
 
-	If set, it indicates that the current cgroup is the root of a
-	new partition or scheduling domain that comprises itself and
+        It accepts only the following input values when written to.
+
+        "normal" or "0" - normal cpuset, not a partition root
+        "partition" or "1" - partition root
+
+	When set to a partition root, the current cgroup is the root of
+	a new partition or scheduling domain that comprises itself and
 	all its descendants except those that are separate partition
 	roots themselves and their descendants.  The root cgroup is
 	always a partition root.
 
-	There are constraints on where this flag can be set.  It can
-	only be set in a cgroup if all the following conditions are true.
+	There are constraints on where a partition root can be set.
+	It can only be set in a cgroup if all the following conditions
+	are true.
 
 	1) The "cpuset.cpus" is not empty and the list of CPUs are
 	   exclusive, i.e. they are not shared by any of its siblings.
@@ -1732,9 +1737,10 @@ Cpuset Interface Files
 	   eliminating corner cases that have to be handled if such a
 	   condition is allowed.
 
-	Setting this flag will take the CPUs away from the effective
-	CPUs of the parent cgroup.  Once it is set, this flag cannot
-	be cleared if there are any child cgroups with cpuset enabled.
+	Setting it to partition root will take the CPUs away from the
+	effective CPUs of the parent cgroup.  Once it is set, this
+	file cannot be reverted back to "normal" if there are any child
+	cgroups with cpuset enabled.
 
 	A parent partition cannot distribute all its CPUs to its
 	child partitions.  There must be at least one cpu left in the
@@ -1751,28 +1757,28 @@ Cpuset Interface Files
 	root to change.  On read, the "cpuset.sched.partition" file
 	can show the following values.
 
-	"0"  Not a partition root
-	"1"  Partition root
-	"-1" Erroneous partition root
+	"normal" - Normal cpuset, not a partition root
+	"partition" - Partition root
+	"partition invalid" - Invalid partition root
 
 	It is a partition root if the first 2 partition root conditions
 	above are true and at least one CPU from "cpuset.cpus" is
 	granted by the parent cgroup.
 
-	A partition root can become an erroneous partition root if none
-	of CPUs requested in "cpuset.cpus" can be granted by the parent
-	cgroup or the parent cgroup is no longer a partition root.
-	In this case, it is not a real partition even though the
+	A partition root can become an invalid partition root if none
+	of the CPUs requested in "cpuset.cpus" can be granted by the
+	parent cgroup or the parent cgroup is no longer a partition
+	root.  In this case, it is not a real partition even though the
 	restriction of the first partition root condition above will
 	still apply.  All the tasks in the cgroup will be migrated to
 	the nearest ancestor partition.
 
-	An erroneous partition root can be transitioned back to a real
-	partition root if at least one of the requested CPUs can now be
-	granted by its parent.	In this case, the tasks will be migrated
-	back to the newly created partition.  Clearing the partition
-	flag of an erroneous partition root is always allowed even if
-	child cpusets are present.
+	An invalid partition root can be transitioned back to a real
+	partition root if at least one of the requested CPUs can now
+	be granted by its parent.  In this case, the tasks will be
+	migrated back to the newly created partition.  Converting an
+	invalid partition root back to "normal" is always allowed even
+	if child cpusets are present.
 
 
 Device controller
