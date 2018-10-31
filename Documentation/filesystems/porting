@@ -633,3 +633,8 @@ in your dentry operations instead.
 	inode to d_splice_alias() will also do the right thing (equivalent of
 	d_add(dentry, NULL); return NULL;), so that kind of special cases
 	also doesn't need a separate treatment.
+--
+[mandatory]
+	->clone_file_range() and ->dedupe_file_range have been replaced with
+	->remap_file_range().  See Documentation/filesystems/vfs.txt for more
+	information.
