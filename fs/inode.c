@@ -10,7 +10,7 @@
 #include <linux/swap.h>
 #include <linux/security.h>
 #include <linux/cdev.h>
-#include <linux/bootmem.h>
+#include <linux/memblock.h>
 #include <linux/fsnotify.h>
 #include <linux/mount.h>
 #include <linux/posix_acl.h>
@@ -730,8 +730,11 @@ static enum lru_status inode_lru_isolate(struct list_head *item,
 		return LRU_REMOVED;
 	}
 
-	/* recently referenced inodes get one more pass */
-	if (inode->i_state & I_REFERENCED) {
+	/*
+	 * Recently referenced inodes and inodes with many attached pages
+	 * get one more pass.
+	 */
+	if (inode->i_state & I_REFERENCED || inode->i_data.nrpages > 1) {
 		inode->i_state &= ~I_REFERENCED;
 		spin_unlock(&inode->i_lock);
 		return LRU_ROTATE;

@@ -3,7 +3,7 @@
 #include <linux/mm.h>
 #include <linux/slab.h>
 #include <linux/uaccess.h>
-#include <linux/bootmem.h>
+#include <linux/memblock.h>
 #include <linux/stacktrace.h>
 #include <linux/page_owner.h>
 #include <linux/jump_label.h>
@@ -274,7 +274,7 @@ void pagetypeinfo_showmixedcount_print(struct seq_file *m,
 	 */
 	for (; pfn < end_pfn; ) {
 		if (!pfn_valid(pfn)) {
-			pfn = ALIGN(pfn + 1, MAX_ORDER_NR_PAGES);
+			pfn = ALIGN(pfn + 1, pageblock_nr_pages);
 			continue;
 		}
 
@@ -541,7 +541,7 @@ static void init_pages_in_zone(pg_data_t *pgdat, struct zone *zone)
 		unsigned long block_end_pfn;
 
 		if (!pfn_valid(pfn)) {
-			pfn = ALIGN(pfn + 1, MAX_ORDER_NR_PAGES);
+			pfn = ALIGN(pfn + 1, pageblock_nr_pages);
 			continue;
 		}
 
