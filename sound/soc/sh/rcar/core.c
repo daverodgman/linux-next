@@ -123,8 +123,8 @@ void rsnd_mod_make_sure(struct rsnd_mod *mod, enum rsnd_mod_type type)
 		struct rsnd_priv *priv = rsnd_mod_to_priv(mod);
 		struct device *dev = rsnd_priv_to_dev(priv);
 
-		dev_warn(dev, "%s[%d] is not your expected module\n",
-			 rsnd_mod_name(mod), rsnd_mod_id(mod));
+		dev_warn(dev, "%s is not your expected module\n",
+			 rsnd_mod_name(mod));
 	}
 }
 
@@ -137,20 +137,62 @@ struct dma_chan *rsnd_mod_dma_req(struct rsnd_dai_stream *io,
 	return mod->ops->dma_req(io, mod);
 }
 
-u32 *rsnd_mod_get_status(struct rsnd_dai_stream *io,
-			 struct rsnd_mod *mod,
+#define MOD_NAME_SIZE 16
+char *rsnd_mod_name(struct rsnd_mod *mod)
+{
+	static char name[MOD_NAME_SIZE];
+
+	/*
+	 * Let's use same char to avoid pointlessness memory
+	 * Thus, rsnd_mod_name() should be used immediately
+	 * Don't keep pointer
+	 */
+	if ((mod)->ops->id_sub) {
+		snprintf(name, MOD_NAME_SIZE, "%s[%d%d]",
+			 mod->ops->name,
+			 rsnd_mod_id(mod),
+			 rsnd_mod_id_sub(mod));
+	} else {
+		snprintf(name, MOD_NAME_SIZE, "%s[%d]",
+			 mod->ops->name,
+			 rsnd_mod_id(mod));
+	}
+
+	return name;
+}
+
+u32 *rsnd_mod_get_status(struct rsnd_mod *mod,
+			 struct rsnd_dai_stream *io,
 			 enum rsnd_mod_type type)
 {
 	return &mod->status;
+}
+
+int rsnd_mod_id_raw(struct rsnd_mod *mod)
+{
+	return mod->id;
+}
+
+int rsnd_mod_id(struct rsnd_mod *mod)
+{
+	if ((mod)->ops->id)
+		return (mod)->ops->id(mod);
+
+	return rsnd_mod_id_raw(mod);
+}
+
+int rsnd_mod_id_sub(struct rsnd_mod *mod)
+{
+	if ((mod)->ops->id_sub)
+		return (mod)->ops->id_sub(mod);
+
+	return 0;
 }
 
 int rsnd_mod_init(struct rsnd_priv *priv,
 		  struct rsnd_mod *mod,
 		  struct rsnd_mod_ops *ops,
 		  struct clk *clk,
-		  u32* (*get_status)(struct rsnd_dai_stream *io,
-				     struct rsnd_mod *mod,
-				     enum rsnd_mod_type type),
 		  enum rsnd_mod_type type,
 		  int id)
 {
@@ -164,7 +206,6 @@ int rsnd_mod_init(struct rsnd_priv *priv,
 	mod->type	= type;
 	mod->clk	= clk;
 	mod->priv	= priv;
-	mod->get_status	= get_status;
 
 	return ret;
 }
@@ -472,20 +513,19 @@ static int rsnd_status_update(u32 *status,
 	enum rsnd_mod_type *types = rsnd_mod_sequence[is_play];		\
 	for_each_rsnd_mod_arrays(i, mod, io, types, RSND_MOD_MAX) {	\
 		int tmp = 0;						\
-		u32 *status = mod->get_status(io, mod, types[i]);	\
+		u32 *status = mod->ops->get_status(mod, io, types[i]);	\
 		int func_call = rsnd_status_update(status,		\
 						__rsnd_mod_shift_##fn,	\
 						__rsnd_mod_add_##fn,	\
 						__rsnd_mod_call_##fn);	\
-		rsnd_dbg_dai_call(dev, "%s[%d]\t0x%08x %s\n",		\
-			rsnd_mod_name(mod), rsnd_mod_id(mod), *status,	\
+		rsnd_dbg_dai_call(dev, "%s\t0x%08x %s\n",		\
+			rsnd_mod_name(mod), *status,	\
 			(func_call && (mod)->ops->fn) ? #fn : "");	\
 		if (func_call && (mod)->ops->fn)			\
 			tmp = (mod)->ops->fn(mod, io, param);		\
 		if (tmp && (tmp != -EPROBE_DEFER))			\
-			dev_err(dev, "%s[%d] : %s error %d\n",		\
-				rsnd_mod_name(mod), rsnd_mod_id(mod),	\
-						     #fn, tmp);		\
+			dev_err(dev, "%s : %s error %d\n",		\
+				rsnd_mod_name(mod), #fn, tmp);		\
 		ret |= tmp;						\
 	}								\
 	ret;								\
@@ -512,8 +552,8 @@ int rsnd_dai_connect(struct rsnd_mod *mod,
 
 	io->mod[type] = mod;
 
-	dev_dbg(dev, "%s[%d] is connected to io (%s)\n",
-		rsnd_mod_name(mod), rsnd_mod_id(mod),
+	dev_dbg(dev, "%s is connected to io (%s)\n",
+		rsnd_mod_name(mod),
 		rsnd_io_is_play(io) ? "Playback" : "Capture");
 
 	return 0;
