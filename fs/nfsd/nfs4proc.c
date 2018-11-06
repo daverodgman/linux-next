@@ -507,7 +507,7 @@ nfsd4_putfh(struct svc_rqst *rqstp, struct nfsd4_compound_state *cstate,
 	cstate->current_fh.fh_handle.fh_size = putfh->pf_fhlen;
 	memcpy(&cstate->current_fh.fh_handle.fh_base, putfh->pf_fhval,
 	       putfh->pf_fhlen);
-	return fh_verify(rqstp, &cstate->current_fh, 0, NFSD_MAY_BYPASS_GSS);
+	return nfs_ok;
 }
 
 static __be32
@@ -1976,15 +1976,16 @@ nfsd4_proc_compound(struct svc_rqst *rqstp)
 			goto encode_op;
 		}
 
-		if (!current_fh->fh_dentry) {
-			if (!(op->opdesc->op_flags & ALLOWED_WITHOUT_FH)) {
-				op->status = nfserr_nofilehandle;
+		if (!(op->opdesc->op_flags & ALLOWED_WITHOUT_FH)) {
+			op->status = fh_verify(rqstp, &cstate->current_fh,
+						0, NFSD_MAY_BYPASS_GSS);
+			if (op->status)
 				goto encode_op;
+			if (current_fh->fh_export->ex_fslocs.migrated &&
+			    !(op->opdesc->op_flags & ALLOWED_ON_ABSENT_FS)) {
+			    op->status = nfserr_moved;
+			    goto encode_op;
 			}
-		} else if (current_fh->fh_export->ex_fslocs.migrated &&
-			  !(op->opdesc->op_flags & ALLOWED_ON_ABSENT_FS)) {
-			op->status = nfserr_moved;
-			goto encode_op;
 		}
 
 		fh_clear_wcc(current_fh);

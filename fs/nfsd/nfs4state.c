@@ -3317,6 +3317,9 @@ nfsd4_reclaim_complete(struct svc_rqst *rqstp,
 	__be32 status = 0;
 
 	if (rc->rca_one_fs) {
+		status = fh_verify(rqstp, &cstate->current_fh, 0, 0);
+		if (status)
+			return status;
 		if (!cstate->current_fh.fh_dentry)
 			return nfserr_nofilehandle;
 		/*
