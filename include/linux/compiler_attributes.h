@@ -4,16 +4,20 @@
 
 /*
  * The attributes in this file are unconditionally defined and they directly
- * map to compiler attribute(s) -- except those that are optional.
+ * map to compiler attribute(s) -- except in the case a compiler does not
+ * support the attribute. In such a case, they are marked as "optional"
+ * and the reason is stated in the attribute's comment.
  *
  * Any other "attributes" (i.e. those that depend on a configuration option,
  * on a compiler, on an architecture, on plugins, on other attributes...)
  * should be defined elsewhere (e.g. compiler_types.h or compiler-*.h).
+ * The intention is to keep this file as simple as possible, as well as
+ * compiler- and version-agnostic (e.g. avoiding GCC_VERSION checks).
  *
  * This file is meant to be sorted (by actual attribute name,
  * not by #define identifier). Use the __attribute__((__name__)) syntax
  * (i.e. with underscores) to avoid future collisions with other macros.
- * If an attribute is optional, state the reason in the comment.
+ * Provide links to the documentation of each supported compiler, if it exists.
  */
 
 /*
