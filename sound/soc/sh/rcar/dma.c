@@ -174,8 +174,8 @@ static int rsnd_dmaen_start(struct rsnd_mod *mod,
 	cfg.src_addr_width = DMA_SLAVE_BUSWIDTH_4_BYTES;
 	cfg.dst_addr_width = DMA_SLAVE_BUSWIDTH_4_BYTES;
 
-	dev_dbg(dev, "%s[%d] %pad -> %pad\n",
-		rsnd_mod_name(mod), rsnd_mod_id(mod),
+	dev_dbg(dev, "%s %pad -> %pad\n",
+		rsnd_mod_name(mod),
 		&cfg.src_addr, &cfg.dst_addr);
 
 	ret = dmaengine_slave_config(dmaen->chan, &cfg);
@@ -289,12 +289,13 @@ static int rsnd_dmaen_pointer(struct rsnd_mod *mod,
 }
 
 static struct rsnd_mod_ops rsnd_dmaen_ops = {
-	.name	= "audmac",
-	.prepare = rsnd_dmaen_prepare,
-	.cleanup = rsnd_dmaen_cleanup,
-	.start	= rsnd_dmaen_start,
-	.stop	= rsnd_dmaen_stop,
-	.pointer= rsnd_dmaen_pointer,
+	.name		= "audmac",
+	.prepare	= rsnd_dmaen_prepare,
+	.cleanup	= rsnd_dmaen_cleanup,
+	.start		= rsnd_dmaen_start,
+	.stop		= rsnd_dmaen_stop,
+	.pointer	= rsnd_dmaen_pointer,
+	.get_status	= rsnd_mod_get_status,
 };
 
 /*
@@ -368,8 +369,7 @@ static u32 rsnd_dmapp_get_id(struct rsnd_dai_stream *io,
 	if ((!entry) || (size <= id)) {
 		struct device *dev = rsnd_priv_to_dev(rsnd_io_to_priv(io));
 
-		dev_err(dev, "unknown connection (%s[%d])\n",
-			rsnd_mod_name(mod), rsnd_mod_id(mod));
+		dev_err(dev, "unknown connection (%s)\n", rsnd_mod_name(mod));
 
 		/* use non-prohibited SRS number as error */
 		return 0x00; /* SSI00 */
@@ -477,10 +477,11 @@ static int rsnd_dmapp_attach(struct rsnd_dai_stream *io,
 }
 
 static struct rsnd_mod_ops rsnd_dmapp_ops = {
-	.name	= "audmac-pp",
-	.start	= rsnd_dmapp_start,
-	.stop	= rsnd_dmapp_stop,
-	.quit	= rsnd_dmapp_stop,
+	.name		= "audmac-pp",
+	.start		= rsnd_dmapp_start,
+	.stop		= rsnd_dmapp_stop,
+	.quit		= rsnd_dmapp_stop,
+	.get_status	= rsnd_mod_get_status,
 };
 
 /*
@@ -690,12 +691,10 @@ static void rsnd_dma_of_path(struct rsnd_mod *this,
 		*mod_to		= mod[1];
 	}
 
-	dev_dbg(dev, "module connection (this is %s[%d])\n",
-		rsnd_mod_name(this), rsnd_mod_id(this));
+	dev_dbg(dev, "module connection (this is %s)\n", rsnd_mod_name(this));
 	for (i = 0; i <= idx; i++) {
-		dev_dbg(dev, "  %s[%d]%s\n",
+		dev_dbg(dev, "  %s%s\n",
 			rsnd_mod_name(mod[i] ? mod[i] : &mem),
-			rsnd_mod_id  (mod[i] ? mod[i] : &mem),
 			(mod[i] == *mod_from) ? " from" :
 			(mod[i] == *mod_to)   ? " to" : "");
 	}
@@ -756,16 +755,14 @@ static int rsnd_dma_alloc(struct rsnd_dai_stream *io, struct rsnd_mod *mod,
 	*dma_mod = rsnd_mod_get(dma);
 
 	ret = rsnd_mod_init(priv, *dma_mod, ops, NULL,
-			    rsnd_mod_get_status, type, dma_id);
+			    type, dma_id);
 	if (ret < 0)
 		return ret;
 
-	dev_dbg(dev, "%s[%d] %s[%d] -> %s[%d]\n",
-		rsnd_mod_name(*dma_mod), rsnd_mod_id(*dma_mod),
+	dev_dbg(dev, "%s %s -> %s\n",
+		rsnd_mod_name(*dma_mod),
 		rsnd_mod_name(mod_from ? mod_from : &mem),
-		rsnd_mod_id  (mod_from ? mod_from : &mem),
-		rsnd_mod_name(mod_to   ? mod_to   : &mem),
-		rsnd_mod_id  (mod_to   ? mod_to   : &mem));
+		rsnd_mod_name(mod_to   ? mod_to   : &mem));
 
 	ret = attach(io, dma, mod_from, mod_to);
 	if (ret < 0)
@@ -823,5 +820,5 @@ int rsnd_dma_probe(struct rsnd_priv *priv)
 	priv->dma = dmac;
 
 	/* dummy mem mod for debug */
-	return rsnd_mod_init(NULL, &mem, &mem_ops, NULL, NULL, 0, 0);
+	return rsnd_mod_init(NULL, &mem, &mem_ops, NULL, 0, 0);
 }

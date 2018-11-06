@@ -181,8 +181,7 @@ static void rsnd_ssi_status_check(struct rsnd_mod *mod,
 		udelay(5);
 	}
 
-	dev_warn(dev, "%s[%d] status check failed\n",
-		 rsnd_mod_name(mod), rsnd_mod_id(mod));
+	dev_warn(dev, "%s status check failed\n", rsnd_mod_name(mod));
 }
 
 static u32 rsnd_ssi_multi_slaves(struct rsnd_dai_stream *io)
@@ -346,9 +345,7 @@ static int rsnd_ssi_master_clk_start(struct rsnd_mod *mod,
 	ssi->rate = rate;
 	ssi->chan = chan;
 
-	dev_dbg(dev, "%s[%d] outputs %u Hz\n",
-		rsnd_mod_name(mod),
-		rsnd_mod_id(mod), rate);
+	dev_dbg(dev, "%s outputs %u Hz\n", rsnd_mod_name(mod), rate);
 
 	return 0;
 }
@@ -494,8 +491,7 @@ static int rsnd_ssi_quit(struct rsnd_mod *mod,
 		return 0;
 
 	if (!ssi->usrcnt) {
-		dev_err(dev, "%s[%d] usrcnt error\n",
-			rsnd_mod_name(mod), rsnd_mod_id(mod));
+		dev_err(dev, "%s usrcnt error\n", rsnd_mod_name(mod));
 		return -EIO;
 	}
 
@@ -654,8 +650,8 @@ static void __rsnd_ssi_interrupt(struct rsnd_mod *mod,
 
 	/* DMA only */
 	if (is_dma && (status & (UIRQ | OIRQ))) {
-		rsnd_dbg_irq_status(dev, "%s[%d] err status : 0x%08x\n",
-			rsnd_mod_name(mod), rsnd_mod_id(mod), status);
+		rsnd_dbg_irq_status(dev, "%s err status : 0x%08x\n",
+			rsnd_mod_name(mod), status);
 
 		stop = true;
 	}
@@ -679,6 +675,41 @@ static irqreturn_t rsnd_ssi_interrupt(int irq, void *data)
 	rsnd_mod_interrupt(mod, __rsnd_ssi_interrupt);
 
 	return IRQ_HANDLED;
+}
+
+static u32 *rsnd_ssi_get_status(struct rsnd_mod *mod,
+				struct rsnd_dai_stream *io,
+				enum rsnd_mod_type type)
+{
+	/*
+	 * SSIP (= SSI parent) needs to be special, otherwise,
+	 * 2nd SSI might doesn't start. see also rsnd_mod_call()
+	 *
+	 * We can't include parent SSI status on SSI, because we don't know
+	 * how many SSI requests parent SSI. Thus, it is localed on "io" now.
+	 * ex) trouble case
+	 *	Playback: SSI0
+	 *	Capture : SSI1 (needs SSI0)
+	 *
+	 * 1) start Capture  ->	SSI0/SSI1 are started.
+	 * 2) start Playback ->	SSI0 doesn't work, because it is already
+	 *			marked as "started" on 1)
+	 *
+	 * OTOH, using each mod's status is good for MUX case.
+	 * It doesn't need to start in 2nd start
+	 * ex)
+	 *	IO-0: SRC0 -> CTU1 -+-> MUX -> DVC -> SSIU -> SSI0
+	 *			    |
+	 *	IO-1: SRC1 -> CTU2 -+
+	 *
+	 * 1) start IO-0 ->	start SSI0
+	 * 2) start IO-1 ->	SSI0 doesn't need to start, because it is
+	 *			already started on 1)
+	 */
+	if (type == RSND_MOD_SSIP)
+		return &io->parent_ssi_status;
+
+	return rsnd_mod_get_status(mod, io, type);
 }
 
 /*
@@ -876,18 +907,19 @@ static int rsnd_ssi_prepare(struct rsnd_mod *mod,
 }
 
 static struct rsnd_mod_ops rsnd_ssi_pio_ops = {
-	.name	= SSI_NAME,
-	.probe	= rsnd_ssi_common_probe,
-	.remove	= rsnd_ssi_common_remove,
-	.init	= rsnd_ssi_pio_init,
-	.quit	= rsnd_ssi_quit,
-	.start	= rsnd_ssi_start,
-	.stop	= rsnd_ssi_stop,
-	.irq	= rsnd_ssi_irq,
-	.pointer = rsnd_ssi_pio_pointer,
-	.pcm_new = rsnd_ssi_pcm_new,
-	.hw_params = rsnd_ssi_hw_params,
-	.prepare = rsnd_ssi_prepare,
+	.name		= SSI_NAME,
+	.probe		= rsnd_ssi_common_probe,
+	.remove		= rsnd_ssi_common_remove,
+	.init		= rsnd_ssi_pio_init,
+	.quit		= rsnd_ssi_quit,
+	.start		= rsnd_ssi_start,
+	.stop		= rsnd_ssi_stop,
+	.irq		= rsnd_ssi_irq,
+	.pointer	= rsnd_ssi_pio_pointer,
+	.pcm_new	= rsnd_ssi_pcm_new,
+	.hw_params	= rsnd_ssi_hw_params,
+	.prepare	= rsnd_ssi_prepare,
+	.get_status	= rsnd_ssi_get_status,
 };
 
 static int rsnd_ssi_dma_probe(struct rsnd_mod *mod,
@@ -928,8 +960,7 @@ static int rsnd_ssi_fallback(struct rsnd_mod *mod,
 	 */
 	mod->ops = &rsnd_ssi_pio_ops;
 
-	dev_info(dev, "%s[%d] fallback to PIO mode\n",
-		 rsnd_mod_name(mod), rsnd_mod_id(mod));
+	dev_info(dev, "%s fallback to PIO mode\n", rsnd_mod_name(mod));
 
 	return 0;
 }
@@ -951,19 +982,20 @@ static struct dma_chan *rsnd_ssi_dma_req(struct rsnd_dai_stream *io,
 }
 
 static struct rsnd_mod_ops rsnd_ssi_dma_ops = {
-	.name	= SSI_NAME,
-	.dma_req = rsnd_ssi_dma_req,
-	.probe	= rsnd_ssi_dma_probe,
-	.remove	= rsnd_ssi_common_remove,
-	.init	= rsnd_ssi_init,
-	.quit	= rsnd_ssi_quit,
-	.start	= rsnd_ssi_start,
-	.stop	= rsnd_ssi_stop,
-	.irq	= rsnd_ssi_irq,
-	.pcm_new = rsnd_ssi_pcm_new,
-	.fallback = rsnd_ssi_fallback,
-	.hw_params = rsnd_ssi_hw_params,
-	.prepare = rsnd_ssi_prepare,
+	.name		= SSI_NAME,
+	.dma_req	= rsnd_ssi_dma_req,
+	.probe		= rsnd_ssi_dma_probe,
+	.remove		= rsnd_ssi_common_remove,
+	.init		= rsnd_ssi_init,
+	.quit		= rsnd_ssi_quit,
+	.start		= rsnd_ssi_start,
+	.stop		= rsnd_ssi_stop,
+	.irq		= rsnd_ssi_irq,
+	.pcm_new	= rsnd_ssi_pcm_new,
+	.fallback	= rsnd_ssi_fallback,
+	.hw_params	= rsnd_ssi_hw_params,
+	.prepare	= rsnd_ssi_prepare,
+	.get_status	= rsnd_ssi_get_status,
 };
 
 int rsnd_ssi_is_dma_mode(struct rsnd_mod *mod)
@@ -1048,15 +1080,13 @@ static void __rsnd_ssi_parse_hdmi_connection(struct rsnd_priv *priv,
 	/* HDMI0 */
 	if (strstr(remote_node->full_name, "hdmi@fead0000")) {
 		rsnd_flags_set(ssi, RSND_SSI_HDMI0);
-		dev_dbg(dev, "%s[%d] connected to HDMI0\n",
-			 rsnd_mod_name(mod), rsnd_mod_id(mod));
+		dev_dbg(dev, "%s connected to HDMI0\n", rsnd_mod_name(mod));
 	}
 
 	/* HDMI1 */
 	if (strstr(remote_node->full_name, "hdmi@feae0000")) {
 		rsnd_flags_set(ssi, RSND_SSI_HDMI1);
-		dev_dbg(dev, "%s[%d] connected to HDMI1\n",
-			rsnd_mod_name(mod), rsnd_mod_id(mod));
+		dev_dbg(dev, "%s connected to HDMI1\n", rsnd_mod_name(mod));
 	}
 }
 
@@ -1089,41 +1119,6 @@ int __rsnd_ssi_is_pin_sharing(struct rsnd_mod *mod)
 		return 0;
 
 	return !!(rsnd_flags_has(rsnd_mod_to_ssi(mod), RSND_SSI_CLK_PIN_SHARE));
-}
-
-static u32 *rsnd_ssi_get_status(struct rsnd_dai_stream *io,
-				struct rsnd_mod *mod,
-				enum rsnd_mod_type type)
-{
-	/*
-	 * SSIP (= SSI parent) needs to be special, otherwise,
-	 * 2nd SSI might doesn't start. see also rsnd_mod_call()
-	 *
-	 * We can't include parent SSI status on SSI, because we don't know
-	 * how many SSI requests parent SSI. Thus, it is localed on "io" now.
-	 * ex) trouble case
-	 *	Playback: SSI0
-	 *	Capture : SSI1 (needs SSI0)
-	 *
-	 * 1) start Capture  ->	SSI0/SSI1 are started.
-	 * 2) start Playback ->	SSI0 doesn't work, because it is already
-	 *			marked as "started" on 1)
-	 *
-	 * OTOH, using each mod's status is good for MUX case.
-	 * It doesn't need to start in 2nd start
-	 * ex)
-	 *	IO-0: SRC0 -> CTU1 -+-> MUX -> DVC -> SSIU -> SSI0
-	 *			    |
-	 *	IO-1: SRC1 -> CTU2 -+
-	 *
-	 * 1) start IO-0 ->	start SSI0
-	 * 2) start IO-1 ->	SSI0 doesn't need to start, because it is
-	 *			already started on 1)
-	 */
-	if (type == RSND_MOD_SSIP)
-		return &io->parent_ssi_status;
-
-	return rsnd_mod_get_status(io, mod, type);
 }
 
 int rsnd_ssi_probe(struct rsnd_priv *priv)
@@ -1192,7 +1187,7 @@ int rsnd_ssi_probe(struct rsnd_priv *priv)
 			ops = &rsnd_ssi_dma_ops;
 
 		ret = rsnd_mod_init(priv, rsnd_mod_get(ssi), ops, clk,
-				    rsnd_ssi_get_status, RSND_MOD_SSI, i);
+				    RSND_MOD_SSI, i);
 		if (ret) {
 			of_node_put(np);
 			goto rsnd_ssi_probe_done;
