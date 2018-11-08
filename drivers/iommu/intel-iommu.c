@@ -662,7 +662,11 @@ int iommu_calculate_max_sagaw(struct intel_iommu *iommu)
  */
 int iommu_calculate_agaw(struct intel_iommu *iommu)
 {
-	return __iommu_calculate_agaw(iommu, DEFAULT_DOMAIN_ADDRESS_WIDTH);
+	unsigned long mgaw;
+
+	/* Respect Max Guest Address Width */
+	mgaw = min(cap_mgaw(iommu->cap), DEFAULT_DOMAIN_ADDRESS_WIDTH);
+	return __iommu_calculate_agaw(iommu, mgaw);
 }
 
 /* This functionin only returns single iommu in a domain */
