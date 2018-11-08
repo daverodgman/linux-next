@@ -56,11 +56,13 @@ v1 is available under Documentation/cgroup-v1/.
          5-3-3-2. IO Latency Interface Files
      5-4. PID
        5-4-1. PID Interface Files
-     5-5. Device
-     5-6. RDMA
-       5-6-1. RDMA Interface Files
-     5-7. Misc
-       5-7-1. perf_event
+     5-5. Cpuset
+       5.5-1. Cpuset Interface Files
+     5-6. Device
+     5-7. RDMA
+       5-7-1. RDMA Interface Files
+     5-8. Misc
+       5-8-1. perf_event
      5-N. Non-normative information
        5-N-1. CPU controller root cgroup process behaviour
        5-N-2. IO controller root cgroup process behaviour
@@ -1608,6 +1610,175 @@ processes to the cgroup such that pids.current is larger than
 pids.max.  However, it is not possible to violate a cgroup PID policy
 through fork() or clone(). These will return -EAGAIN if the creation
 of a new process would cause a cgroup policy to be violated.
+
+
+Cpuset
+------
+
+The "cpuset" controller provides a mechanism for constraining
+the CPU and memory node placement of tasks to only the resources
+specified in the cpuset interface files in a task's current cgroup.
+This is especially valuable on large NUMA systems where placing jobs
+on properly sized subsets of the systems with careful processor and
+memory placement to reduce cross-node memory access and contention
+can improve overall system performance.
+
+The "cpuset" controller is hierarchical.  That means the controller
+cannot use CPUs or memory nodes not allowed in its parent.
+
+
+Cpuset Interface Files
+~~~~~~~~~~~~~~~~~~~~~~
+
+  cpuset.cpus
+	A read-write multiple values file which exists on non-root
+	cpuset-enabled cgroups.
+
+	It lists the requested CPUs to be used by tasks within this
+	cgroup.  The actual list of CPUs to be granted, however, is
+	subjected to constraints imposed by its parent and can differ
+	from the requested CPUs.
+
+	The CPU numbers are comma-separated numbers or ranges.
+	For example:
+
+	  # cat cpuset.cpus
+	  0-4,6,8-10
+
+	An empty value indicates that the cgroup is using the same
+	setting as the nearest cgroup ancestor with a non-empty
+	"cpuset.cpus" or all the available CPUs if none is found.
+
+	The value of "cpuset.cpus" stays constant until the next update
+	and won't be affected by any CPU hotplug events.
+
+  cpuset.cpus.effective
+	A read-only multiple values file which exists on all
+	cpuset-enabled cgroups.
+
+	It lists the onlined CPUs that are actually granted to this
+	cgroup by its parent.  These CPUs are allowed to be used by
+	tasks within the current cgroup.
+
+	If "cpuset.cpus" is empty, the "cpuset.cpus.effective" file shows
+	all the CPUs from the parent cgroup that can be available to
+	be used by this cgroup.  Otherwise, it should be a subset of
+	"cpuset.cpus" unless none of the CPUs listed in "cpuset.cpus"
+	can be granted.  In this case, it will be treated just like an
+	empty "cpuset.cpus".
+
+	Its value will be affected by CPU hotplug events.
+
+  cpuset.mems
+	A read-write multiple values file which exists on non-root
+	cpuset-enabled cgroups.
+
+	It lists the requested memory nodes to be used by tasks within
+	this cgroup.  The actual list of memory nodes granted, however,
+	is subjected to constraints imposed by its parent and can differ
+	from the requested memory nodes.
+
+	The memory node numbers are comma-separated numbers or ranges.
+	For example:
+
+	  # cat cpuset.mems
+	  0-1,3
+
+	An empty value indicates that the cgroup is using the same
+	setting as the nearest cgroup ancestor with a non-empty
+	"cpuset.mems" or all the available memory nodes if none
+	is found.
+
+	The value of "cpuset.mems" stays constant until the next update
+	and won't be affected by any memory nodes hotplug events.
+
+  cpuset.mems.effective
+	A read-only multiple values file which exists on all
+	cpuset-enabled cgroups.
+
+	It lists the onlined memory nodes that are actually granted to
+	this cgroup by its parent. These memory nodes are allowed to
+	be used by tasks within the current cgroup.
+
+	If "cpuset.mems" is empty, it shows all the memory nodes from the
+	parent cgroup that will be available to be used by this cgroup.
+	Otherwise, it should be a subset of "cpuset.mems" unless none of
+	the memory nodes listed in "cpuset.mems" can be granted.  In this
+	case, it will be treated just like an empty "cpuset.mems".
+
+	Its value will be affected by memory nodes hotplug events.
+
+  cpuset.sched.partition
+	A read-write single value file which exists on non-root
+	cpuset-enabled cgroups.  This file is set and owned by the
+	parent cgroup.
+
+        It accepts only the following input values when written to.
+
+        "normal" or "0" - normal cpuset, not a partition root
+        "partition" or "1" - partition root
+
+	When set to a partition root, the current cgroup is the root of
+	a new partition or scheduling domain that comprises itself and
+	all its descendants except those that are separate partition
+	roots themselves and their descendants.  The root cgroup is
+	always a partition root.
+
+	There are constraints on where a partition root can be set.
+	It can only be set in a cgroup if all the following conditions
+	are true.
+
+	1) The "cpuset.cpus" is not empty and the list of CPUs are
+	   exclusive, i.e. they are not shared by any of its siblings.
+	2) The parent cgroup is a partition root.
+	3) The "cpuset.cpus" is also a proper subset of the parent's
+	   "cpuset.cpus.effective".
+	4) There is no child cgroups with cpuset enabled.  This is for
+	   eliminating corner cases that have to be handled if such a
+	   condition is allowed.
+
+	Setting it to partition root will take the CPUs away from the
+	effective CPUs of the parent cgroup.  Once it is set, this
+	file cannot be reverted back to "normal" if there are any child
+	cgroups with cpuset enabled.
+
+	A parent partition cannot distribute all its CPUs to its
+	child partitions.  There must be at least one cpu left in the
+	parent partition.
+
+	Once becoming a partition root, changes to "cpuset.cpus" is
+	generally allowed as long as the first condition above is true,
+	the change will not take away all the CPUs from the parent
+	partition and the new "cpuset.cpus" value is a superset of its
+	children's "cpuset.cpus" values.
+
+	Sometimes, external factors like changes to ancestors'
+	"cpuset.cpus" or cpu hotplug can cause the state of the partition
+	root to change.  On read, the "cpuset.sched.partition" file
+	can show the following values.
+
+	"normal" - Normal cpuset, not a partition root
+	"partition" - Partition root
+	"partition invalid" - Invalid partition root
+
+	It is a partition root if the first 2 partition root conditions
+	above are true and at least one CPU from "cpuset.cpus" is
+	granted by the parent cgroup.
+
+	A partition root can become an invalid partition root if none
+	of the CPUs requested in "cpuset.cpus" can be granted by the
+	parent cgroup or the parent cgroup is no longer a partition
+	root.  In this case, it is not a real partition even though the
+	restriction of the first partition root condition above will
+	still apply.  All the tasks in the cgroup will be migrated to
+	the nearest ancestor partition.
+
+	An invalid partition root can be transitioned back to a real
+	partition root if at least one of the requested CPUs can now
+	be granted by its parent.  In this case, the tasks will be
+	migrated back to the newly created partition.  Converting an
+	invalid partition root back to "normal" is always allowed even
+	if child cpusets are present.
 
 
 Device controller
