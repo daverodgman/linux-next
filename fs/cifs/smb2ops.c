@@ -915,9 +915,29 @@ smb2_set_ea(const unsigned int xid, struct cifs_tcon *tcon,
 	if (!utf16_path)
 		return -ENOMEM;
 
+	len = sizeof(ea) + ea_name_len + ea_value_len + 1;
+
 	memset(rqst, 0, sizeof(rqst));
 	resp_buftype[0] = resp_buftype[1] = resp_buftype[2] = CIFS_NO_BUFFER;
 	memset(rsp_iov, 0, sizeof(rsp_iov));
+
+	/*
+	 * Make sure we have enough space to store the new EA.
+	 */
+	rc = smb2_query_info_compound(xid, tcon, utf16_path,
+				      FILE_READ_EA,
+				      FILE_FULL_EA_INFORMATION,
+				      SMB2_O_INFO_FILE,
+				      SMB2_MAX_EA_BUF,
+				      &rsp_iov[0], &resp_buftype[0], cifs_sb);
+	free_rsp_buf(resp_buftype[0], rsp_iov[0].iov_base);
+	resp_buftype[0] = CIFS_NO_BUFFER;
+	rsp_iov[0].iov_base = NULL;
+	if (len + rsp_iov[0].iov_len > SMB2_MAX_EA_BUF) {
+		rc = -ERANGE;
+		goto sea_exit;
+	}
+
 
 	/* Open */
 	memset(&open_iov, 0, sizeof(open_iov));
